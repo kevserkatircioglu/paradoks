@@ -691,3 +691,131 @@
     padding: 16px;
   }
 }
+
+/* Kaynaklar ve geçmiş çalışma alanları */
+
+.workspace-view {
+  width: min(1040px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 52px 0 40px;
+}
+
+.workspace-view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid #e1e5ed;
+}
+
+.workspace-eyebrow {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: #7257ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+}
+
+.workspace-view-header h2 {
+  margin: 0;
+  color: #182033;
+  font-size: 34px;
+  letter-spacing: -1px;
+}
+
+.workspace-view-header p {
+  max-width: 650px;
+  margin: 11px 0 0;
+  color: #778195;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* Boş durum kartı */
+
+.workspace-empty-state {
+  display: flex;
+  min-height: 430px;
+  margin-top: 30px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 30px;
+  border: 1px dashed #d8ddea;
+  border-radius: 22px;
+  background:
+    radial-gradient(
+      circle at top,
+      rgb(114 87 255 / 8%),
+      transparent 42%
+    ),
+    #ffffff;
+  text-align: center;
+  box-shadow: 0 10px 32px rgb(15 23 42 / 4%);
+}
+
+.workspace-empty-icon {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  border-radius: 21px;
+  background: linear-gradient(145deg, #7257ff, #9f8eff);
+  color: #ffffff;
+  font-size: 29px;
+  font-weight: 800;
+  box-shadow: 0 17px 38px rgb(114 87 255 / 22%);
+}
+
+.workspace-empty-state h3 {
+  margin: 23px 0 9px;
+  color: #263145;
+  font-size: 19px;
+}
+
+.workspace-empty-state p {
+  max-width: 480px;
+  margin: 0;
+  color: #7d8798;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* Kaynaklar listesi */
+
+.workspace-source-grid {
+  display: grid;
+  margin-top: 30px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.workspace-source-grid .message-source-card {
+  width: 100%;
+  min-height: 150px;
+}
+
+/* Küçük ekranlar */
+
+@media (max-width: 800px) {
+  .workspace-view {
+    width: calc(100% - 36px);
+    padding-top: 34px;
+  }
+
+  .workspace-view-header h2 {
+    font-size: 29px;
+  }
+
+  .workspace-source-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-empty-state {
+    min-height: 360px;
+    padding: 36px 20px;
+  }
+}

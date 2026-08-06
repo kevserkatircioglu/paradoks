@@ -1,8 +1,16 @@
-import { useMemo, useState, type FormEvent } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react"
+
 import {
   sendChatMessage,
   type Source,
 } from "./services/chatApi"
+
 import "./App.css"
 
 type Message = {
@@ -11,6 +19,8 @@ type Message = {
   content: string
   sources?: Source[]
 }
+
+type ActiveView = "chat" | "sources" | "history"
 
 const suggestions = [
   "5G ağ mimarisinin temel bileşenleri nelerdir?",
@@ -23,32 +33,63 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
+  const [activeView, setActiveView] =
+    useState<ActiveView>("chat")
+
   const [isSourcesPanelOpen, setIsSourcesPanelOpen] =
-  useState(false)
+    useState(false)
 
-const conversationSources = useMemo(() => {
-  const uniqueSources = new Map<string, Source>()
+  const mainRef = useRef<HTMLElement>(null)
 
-  messages.forEach((message) => {
-    message.sources?.forEach((source) => {
-      const sourceKey = [
-        source.org,
-        source.code,
-        source.version,
-        source.clause,
-        source.source_url,
-      ].join("-")
+  const conversationSources = useMemo(() => {
+    const uniqueSources = new Map<string, Source>()
 
-      if (!uniqueSources.has(sourceKey)) {
-        uniqueSources.set(sourceKey, source)
-      }
+    messages.forEach((message) => {
+      message.sources?.forEach((source) => {
+        const sourceKey = [
+          source.org,
+          source.code,
+          source.version,
+          source.clause,
+          source.source_url,
+        ].join("-")
+
+        if (!uniqueSources.has(sourceKey)) {
+          uniqueSources.set(sourceKey, source)
+        }
+      })
     })
-  })
 
-  return Array.from(uniqueSources.values())
-}, [messages])
+    return Array.from(uniqueSources.values())
+  }, [messages])
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  useEffect(() => {
+    setIsSourcesPanelOpen(false)
+
+    requestAnimationFrame(() => {
+      window.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: "auto",
+      })
+
+      document.scrollingElement?.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: "auto",
+      })
+
+      mainRef.current?.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: "auto",
+      })
+    })
+  }, [activeView])
+
+  const handleSubmit = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
     event.preventDefault()
 
     const trimmedQuestion = question.trim()
@@ -72,21 +113,26 @@ const conversationSources = useMemo(() => {
     setIsLoading(true)
 
     try {
-      const response = await sendChatMessage(trimmedQuestion)
+      const response = await sendChatMessage(
+        trimmedQuestion,
+      )
 
       const assistantMessage: Message = {
-          id: Date.now() + 1,
-          role: "assistant",
-          content: response.reply,
-          sources: response.sources,
-        }
+        id: Date.now() + 1,
+        role: "assistant",
+        content: response.reply,
+        sources: response.sources,
+      }
 
       setMessages((currentMessages) => [
         ...currentMessages,
         assistantMessage,
       ])
     } catch (error) {
-      console.error("Sohbet isteği başarısız oldu:", error)
+      console.error(
+        "Sohbet isteği başarısız oldu:",
+        error,
+      )
 
       const errorMessage: Message = {
         id: Date.now() + 1,
@@ -111,7 +157,23 @@ const conversationSources = useMemo(() => {
 
     setMessages([])
     setQuestion("")
+    setActiveView("chat")
+    setIsSourcesPanelOpen(false)
   }
+
+  const pageTitle =
+    activeView === "chat"
+      ? "Paradoks"
+      : activeView === "sources"
+        ? "Kaynaklar"
+        : "Geçmiş"
+
+  const pageDescription =
+    activeView === "chat"
+      ? "Telekom standartları yapay zekâ asistanı"
+      : activeView === "sources"
+        ? "Sisteme aktarılan standart dokümanları"
+        : "Önceki konuşmalar ve kaynak kayıtları"
 
   return (
     <div className="app-shell">
@@ -134,16 +196,37 @@ const conversationSources = useMemo(() => {
           + Yeni sohbet
         </button>
 
-        <nav className="sidebar-nav" aria-label="Ana menü">
-          <button type="button" className="nav-item active">
+        <nav
+          className="sidebar-nav"
+          aria-label="Ana menü"
+        >
+          <button
+            type="button"
+            className={`nav-item ${
+              activeView === "chat" ? "active" : ""
+            }`}
+            onClick={() => setActiveView("chat")}
+          >
             Sohbet
           </button>
 
-          <button type="button" className="nav-item">
+          <button
+            type="button"
+            className={`nav-item ${
+              activeView === "sources" ? "active" : ""
+            }`}
+            onClick={() => setActiveView("sources")}
+          >
             Kaynaklar
           </button>
 
-          <button type="button" className="nav-item">
+          <button
+            type="button"
+            className={`nav-item ${
+              activeView === "history" ? "active" : ""
+            }`}
+            onClick={() => setActiveView("history")}
+          >
             Geçmiş
           </button>
         </nav>
@@ -154,237 +237,420 @@ const conversationSources = useMemo(() => {
         </div>
       </aside>
 
-      <main className="chat-page">
+      <main
+        ref={mainRef}
+        className="chat-page"
+      >
         <header className="chat-header">
           <div>
-            <h1>Paradoks</h1>
-            <p>Telekom standartları yapay zekâ asistanı</p>
+            <h1>{pageTitle}</h1>
+            <p>{pageDescription}</p>
           </div>
 
-         <button
-            type="button"
-            className="source-button"
-            aria-controls="sources-panel"
-            aria-expanded={isSourcesPanelOpen}
-            onClick={() => setIsSourcesPanelOpen(true)}
-          >
-            Kaynakları görüntüle
-          </button>
+          {activeView === "chat" && (
+            <button
+              type="button"
+              className="source-button"
+              aria-controls="sources-panel"
+              aria-expanded={isSourcesPanelOpen}
+              onClick={() =>
+                setIsSourcesPanelOpen(true)
+              }
+            >
+              Kaynakları görüntüle
+            </button>
+          )}
         </header>
 
-        {messages.length === 0 ? (
-          <section className="welcome-section">
-            <div className="welcome-icon">P</div>
+        {activeView === "chat" && (
+          <>
+            {messages.length === 0 ? (
+              <section className="welcome-section">
+                <div className="welcome-icon">P</div>
 
-            <h2>Standartlar arasında kaybolmadan sorun.</h2>
+                <h2>
+                  Standartlar arasında kaybolmadan
+                  sorun.
+                </h2>
 
-            <p>
-              3GPP ve ilişkili telekom dokümanları hakkında sorularınızı
-              kaynaklara dayalı olarak yanıtlayın.
-            </p>
+                <p>
+                  3GPP ve ilişkili telekom dokümanları
+                  hakkında sorularınızı kaynaklara
+                  dayalı olarak yanıtlayın.
+                </p>
 
-            <div className="suggestion-grid">
-              {suggestions.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  onClick={() => setQuestion(suggestion)}
-                  disabled={isLoading}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <section
-            className="messages-section"
-            aria-label="Sohbet mesajları"
-          >
-            {messages.map((message) => (
-  <div
-    key={message.id}
-    className={`message-row ${message.role}`}
-  >
-    <div className="message-content">
-      <div className="message-bubble">
-        {message.content}
-      </div>
-
-      {message.role === "assistant" &&
-        message.sources &&
-        message.sources.length > 0 && (
-          <div className="message-sources">
-            <h3>Kullanılan kaynaklar</h3>
-
-            {message.sources.map((source, index) => (
-              <article
-                key={`${source.code}-${source.clause}-${index}`}
-                className="message-source-card"
+                <div className="suggestion-grid">
+                  {suggestions.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      disabled={isLoading}
+                      onClick={() =>
+                        setQuestion(suggestion)
+                      }
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : (
+              <section
+                className="messages-section"
+                aria-label="Sohbet mesajları"
               >
-                <div className="source-card-header">
-                  <strong>
-                    {source.org} {source.code}
-                  </strong>
-
-                  <span>{source.status}</span>
-                </div>
-
-                <div className="source-card-details">
-                  <span>Sürüm: {source.version}</span>
-                  <span>Madde: {source.clause}</span>
-                  <span>
-                    Uzaklık: {source.distance.toFixed(3)}
-                  </span>
-                </div>
-
-                {source.source_url && (
-                  <a
-                    href={source.source_url}
-                    target="_blank"
-                    rel="noreferrer"
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`message-row ${message.role}`}
                   >
-                    Kaynağı görüntüle
-                  </a>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-    </div>
-  </div>
-))}
+                    <div className="message-content">
+                      <div className="message-bubble">
+                        {message.content}
+                      </div>
 
-            {isLoading && (
-              <div className="message-row assistant">
-                <div className="message-bubble">
-                  Yanıt hazırlanıyor...
+                      {message.role === "assistant" &&
+                        message.sources &&
+                        message.sources.length > 0 && (
+                          <div className="message-sources">
+                            <h3>Kullanılan kaynaklar</h3>
+
+                            {message.sources.map(
+                              (source, index) => (
+                                <article
+                                  key={`${source.code}-${source.clause}-${index}`}
+                                  className="message-source-card"
+                                >
+                                  <div className="source-card-header">
+                                    <strong>
+                                      {source.org}{" "}
+                                      {source.code}
+                                    </strong>
+
+                                    <span>
+                                      {source.status}
+                                    </span>
+                                  </div>
+
+                                  <div className="source-card-details">
+                                    <span>
+                                      Sürüm:{" "}
+                                      {source.version}
+                                    </span>
+
+                                    <span>
+                                      Madde:{" "}
+                                      {source.clause}
+                                    </span>
+
+                                    <span>
+                                      Uzaklık:{" "}
+                                      {source.distance.toFixed(
+                                        3,
+                                      )}
+                                    </span>
+                                  </div>
+
+                                  {source.source_url && (
+                                    <a
+                                      href={
+                                        source.source_url
+                                      }
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      Kaynağı görüntüle
+                                    </a>
+                                  )}
+                                </article>
+                              ),
+                            )}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                ))}
+
+                {isLoading && (
+                  <div className="message-row assistant">
+                    <div className="message-content">
+                      <div className="message-bubble">
+                        Yanıt hazırlanıyor...
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            <form
+              className="prompt-area"
+              onSubmit={handleSubmit}
+            >
+              <div className="prompt-box">
+                <textarea
+                  rows={1}
+                  aria-label="Mesaj"
+                  placeholder="Telekom standartları hakkında bir soru sorun..."
+                  value={question}
+                  disabled={isLoading}
+                  onChange={(event) =>
+                    setQuestion(event.target.value)
+                  }
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !isLoading
+                    ) {
+                      event.preventDefault()
+                      event.currentTarget.form?.requestSubmit()
+                    }
+                  }}
+                />
+
+                <button
+                  type="submit"
+                  className="send-button"
+                  disabled={
+                    !question.trim() || isLoading
+                  }
+                >
+                  {isLoading ? "Bekleyin" : "Gönder"}
+                </button>
+              </div>
+
+              <p className="prompt-note">
+                Yanıtlar yüklenen ve erişilebilen
+                kaynaklara göre oluşturulur.
+              </p>
+            </form>
+          </>
+        )}
+
+        {activeView === "sources" && (
+          <section className="workspace-view">
+            <div className="workspace-view-header">
+              <div>
+                <span className="workspace-eyebrow">
+                  Doküman yönetimi
+                </span>
+
+                <h2>Kaynaklar</h2>
+
+                <p>
+                  Sisteme aktarılan telekom
+                  standartları, sürümleri ve erişim
+                  durumları bu bölümde
+                  görüntülenecek.
+                </p>
+              </div>
+            </div>
+
+            {conversationSources.length === 0 ? (
+              <div className="workspace-empty-state">
+                <div className="workspace-empty-icon">
+                  P
                 </div>
+
+                <h3>
+                  Henüz görüntülenecek kaynak yok
+                </h3>
+
+                <p>
+                  Veritabanı entegrasyonu
+                  tamamlandığında standart dokümanları,
+                  maddeleri ve kaynak bağlantıları
+                  burada listelenecek.
+                </p>
+              </div>
+            ) : (
+              <div className="workspace-source-grid">
+                {conversationSources.map(
+                  (source, index) => (
+                    <article
+                      key={`${source.code}-${source.clause}-${index}`}
+                      className="message-source-card"
+                    >
+                      <div className="source-card-header">
+                        <strong>
+                          {source.org} {source.code}
+                        </strong>
+
+                        <span>{source.status}</span>
+                      </div>
+
+                      <div className="source-card-details">
+                        <span>
+                          Sürüm: {source.version}
+                        </span>
+
+                        <span>
+                          Madde: {source.clause}
+                        </span>
+
+                        <span>
+                          Uzaklık:{" "}
+                          {source.distance.toFixed(3)}
+                        </span>
+                      </div>
+
+                      {source.source_url && (
+                        <a
+                          href={source.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Kaynağı görüntüle
+                        </a>
+                      )}
+                    </article>
+                  ),
+                )}
               </div>
             )}
           </section>
         )}
 
-        <form className="prompt-area" onSubmit={handleSubmit}>
-          <div className="prompt-box">
-            <textarea
-              rows={1}
-              aria-label="Mesaj"
-              placeholder="Telekom standartları hakkında bir soru sorun..."
-              value={question}
-              disabled={isLoading}
-              onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !isLoading
-                ) {
-                  event.preventDefault()
-                  event.currentTarget.form?.requestSubmit()
-                }
-              }}
-            />
+        {activeView === "history" && (
+          <section className="workspace-view">
+            <div className="workspace-view-header">
+              <div>
+                <span className="workspace-eyebrow">
+                  Konuşma kayıtları
+                </span>
 
-            <button
-              type="submit"
-              className="send-button"
-              disabled={!question.trim() || isLoading}
-            >
-              {isLoading ? "Bekleyin" : "Gönder"}
-            </button>
-          </div>
+                <h2>Geçmiş</h2>
 
-          <p className="prompt-note">
-            Yanıtlar yüklenen ve erişilebilen kaynaklara göre oluşturulur.
-          </p>
-        </form>
-      </main>
-              {isSourcesPanelOpen && (
-  <>
-    <button
-      type="button"
-      className="sources-panel-backdrop"
-      aria-label="Kaynak panelini kapat"
-      onClick={() => setIsSourcesPanelOpen(false)}
-    />
+                <p>
+                  Önceki konuşmalar ve kullanılan
+                  kaynaklar bu bölümden tekrar
+                  açılabilecek.
+                </p>
+              </div>
+            </div>
 
-    <aside
-      id="sources-panel"
-      className="sources-panel"
-      aria-label="Sohbette kullanılan kaynaklar"
-    >
-      <header className="sources-panel-header">
-        <div>
-          <h2>Sohbet kaynakları</h2>
-          <p>
-            Bu konuşmada yanıtlara dayanak olarak kullanılan dokümanlar.
-          </p>
-        </div>
+            <div className="workspace-empty-state">
+              <div className="workspace-empty-icon">
+                P
+              </div>
 
-        <button
-          type="button"
-          className="sources-panel-close"
-          aria-label="Kaynak panelini kapat"
-          onClick={() => setIsSourcesPanelOpen(false)}
-        >
-          ×
-        </button>
-      </header>
+              <h3>Henüz kayıtlı sohbet yok</h3>
 
-      <div className="sources-panel-content">
-        {conversationSources.length === 0 ? (
-          <div className="sources-empty-state">
-            <div className="sources-empty-icon">P</div>
-
-            <h3>Henüz kaynak bulunmuyor</h3>
-
-            <p>
-              Backend bir yanıtta kaynak döndürdüğünde ilgili standartlar
-              burada listelenecek.
-            </p>
-          </div>
-        ) : (
-          <div className="sources-panel-list">
-            {conversationSources.map((source, index) => (
-              <article
-                key={`${source.code}-${source.clause}-${index}`}
-                className="message-source-card"
-              >
-                <div className="source-card-header">
-                  <strong>
-                    {source.org} {source.code}
-                  </strong>
-
-                  <span>{source.status}</span>
-                </div>
-
-                <div className="source-card-details">
-                  <span>Sürüm: {source.version}</span>
-                  <span>Madde: {source.clause}</span>
-                  <span>
-                    Uzaklık: {source.distance.toFixed(3)}
-                  </span>
-                </div>
-
-                {source.source_url && (
-                  <a
-                    href={source.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Kaynağı görüntüle
-                  </a>
-                )}
-              </article>
-            ))}
-          </div>
+              <p>
+                Sohbet geçmişi özelliği
+                etkinleştirildiğinde önceki
+                konuşmalar burada tarih ve başlık
+                bilgileriyle listelenecek.
+              </p>
+            </div>
+          </section>
         )}
-      </div>
-    </aside>
-  </>
-)}
+      </main>
 
+      {isSourcesPanelOpen && (
+        <>
+          <button
+            type="button"
+            className="sources-panel-backdrop"
+            aria-label="Kaynak panelini kapat"
+            onClick={() =>
+              setIsSourcesPanelOpen(false)
+            }
+          />
+
+          <aside
+            id="sources-panel"
+            className="sources-panel"
+            aria-label="Sohbette kullanılan kaynaklar"
+          >
+            <header className="sources-panel-header">
+              <div>
+                <h2>Sohbet kaynakları</h2>
+
+                <p>
+                  Bu konuşmada yanıtlara dayanak
+                  olarak kullanılan dokümanlar.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="sources-panel-close"
+                aria-label="Kaynak panelini kapat"
+                onClick={() =>
+                  setIsSourcesPanelOpen(false)
+                }
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="sources-panel-content">
+              {conversationSources.length === 0 ? (
+                <div className="sources-empty-state">
+                  <div className="sources-empty-icon">
+                    P
+                  </div>
+
+                  <h3>Henüz kaynak bulunmuyor</h3>
+
+                  <p>
+                    Backend bir yanıtta kaynak
+                    döndürdüğünde ilgili standartlar
+                    burada listelenecek.
+                  </p>
+                </div>
+              ) : (
+                <div className="sources-panel-list">
+                  {conversationSources.map(
+                    (source, index) => (
+                      <article
+                        key={`${source.code}-${source.clause}-${index}`}
+                        className="message-source-card"
+                      >
+                        <div className="source-card-header">
+                          <strong>
+                            {source.org}{" "}
+                            {source.code}
+                          </strong>
+
+                          <span>{source.status}</span>
+                        </div>
+
+                        <div className="source-card-details">
+                          <span>
+                            Sürüm: {source.version}
+                          </span>
+
+                          <span>
+                            Madde: {source.clause}
+                          </span>
+
+                          <span>
+                            Uzaklık:{" "}
+                            {source.distance.toFixed(3)}
+                          </span>
+                        </div>
+
+                        {source.source_url && (
+                          <a
+                            href={source.source_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Kaynağı görüntüle
+                          </a>
+                        )}
+                      </article>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   )
 }
