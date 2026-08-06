@@ -434,3 +434,97 @@
   opacity: 0.5;
   transform: none;
 }
+
+/* Mesaj içeriği ve kaynak kartları */
+
+.message-content {
+  display: flex;
+  max-width: min(680px, 82%);
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message-row.user .message-content {
+  align-items: flex-end;
+}
+
+.message-row.assistant .message-content {
+  align-items: stretch;
+}
+
+.message-content .message-bubble {
+  max-width: 100%;
+}
+
+.message-sources {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message-sources h3 {
+  margin: 4px 0 0;
+  color: #687386;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.message-source-card {
+  padding: 14px 15px;
+  border: 1px solid #e1e5ed;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 5px 18px rgb(15 23 42 / 5%);
+}
+
+.source-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.source-card-header strong {
+  color: #283346;
+  font-size: 14px;
+}
+
+.source-card-header span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f0edff;
+  color: #6651d8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.source-card-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.source-card-details span {
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: #f5f7fa;
+  color: #6d7788;
+  font-size: 11px;
+}
+
+.message-source-card a {
+  display: inline-block;
+  margin-top: 11px;
+  color: #654de1;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.message-source-card a:hover {
+  text-decoration: underline;
+}

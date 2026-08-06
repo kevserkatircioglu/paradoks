@@ -1,11 +1,15 @@
 import { useState, type FormEvent } from "react"
-import { sendChatMessage } from "./services/chatApi"
+import {
+  sendChatMessage,
+  type Source,
+} from "./services/chatApi"
 import "./App.css"
 
 type Message = {
   id: number
   role: "user" | "assistant"
   content: string
+  sources?: Source[]
 }
 
 const suggestions = [
@@ -46,10 +50,11 @@ function App() {
       const response = await sendChatMessage(trimmedQuestion)
 
       const assistantMessage: Message = {
-        id: Date.now() + 1,
-        role: "assistant",
-        content: response.reply,
-      }
+          id: Date.now() + 1,
+          role: "assistant",
+          content: response.reply,
+          sources: response.sources,
+        }
 
       setMessages((currentMessages) => [
         ...currentMessages,
@@ -166,15 +171,58 @@ function App() {
             aria-label="Sohbet mesajları"
           >
             {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`message-row ${message.role}`}
+  <div
+    key={message.id}
+    className={`message-row ${message.role}`}
+  >
+    <div className="message-content">
+      <div className="message-bubble">
+        {message.content}
+      </div>
+
+      {message.role === "assistant" &&
+        message.sources &&
+        message.sources.length > 0 && (
+          <div className="message-sources">
+            <h3>Kullanılan kaynaklar</h3>
+
+            {message.sources.map((source, index) => (
+              <article
+                key={`${source.code}-${source.clause}-${index}`}
+                className="message-source-card"
               >
-                <div className="message-bubble">
-                  {message.content}
+                <div className="source-card-header">
+                  <strong>
+                    {source.org} {source.code}
+                  </strong>
+
+                  <span>{source.status}</span>
                 </div>
-              </div>
+
+                <div className="source-card-details">
+                  <span>Sürüm: {source.version}</span>
+                  <span>Madde: {source.clause}</span>
+                  <span>
+                    Uzaklık: {source.distance.toFixed(3)}
+                  </span>
+                </div>
+
+                {source.source_url && (
+                  <a
+                    href={source.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Kaynağı görüntüle
+                  </a>
+                )}
+              </article>
             ))}
+          </div>
+        )}
+    </div>
+  </div>
+))}
 
             {isLoading && (
               <div className="message-row assistant">
