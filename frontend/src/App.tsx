@@ -13,11 +13,13 @@ import ChatView, {
 import HistoryView from "./components/HistoryView"
 import Sidebar, {
   type ActiveView,
+  type ApiStatus,
 } from "./components/Sidebar"
 import SourcesPanel from "./components/SourcesPanel"
 import SourcesView from "./components/SourcesView"
 
 import {
+  checkApiHealth,
   sendChatMessage,
   type Source,
 } from "./services/chatApi"
@@ -64,6 +66,9 @@ function App() {
 
   const [activeView, setActiveView] =
     useState<ActiveView>("chat")
+
+  const [apiStatus, setApiStatus] =
+    useState<ApiStatus>("checking")
 
   const [isSourcesPanelOpen, setIsSourcesPanelOpen] =
     useState(false)
@@ -114,6 +119,31 @@ function App() {
   useEffect(() => {
     saveConversations(conversations)
   }, [conversations])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const updateApiStatus = async () => {
+      const isOnline = await checkApiHealth()
+
+      if (isMounted) {
+        setApiStatus(
+          isOnline ? "online" : "offline",
+        )
+      }
+    }
+
+    void updateApiStatus()
+
+    const intervalId = window.setInterval(() => {
+      void updateApiStatus()
+    }, 30_000)
+
+    return () => {
+      isMounted = false
+      window.clearInterval(intervalId)
+    }
+  }, [])
 
   useEffect(() => {
     setIsSourcesPanelOpen(false)
@@ -238,6 +268,8 @@ function App() {
         trimmedQuestion,
       )
 
+      setApiStatus("online")
+
       const assistantMessage: Message = {
         id: Date.now() + 1,
         role: "assistant",
@@ -259,6 +291,8 @@ function App() {
         "Sohbet isteği başarısız oldu:",
         error,
       )
+
+      setApiStatus("offline")
 
       const errorMessage: Message = {
         id: Date.now() + 1,
@@ -329,6 +363,7 @@ function App() {
       <Sidebar
         activeView={activeView}
         isLoading={isLoading}
+        apiStatus={apiStatus}
         onNewChat={handleNewChat}
         onViewChange={setActiveView}
       />

@@ -3,19 +3,49 @@ export type ActiveView =
   | "sources"
   | "history"
 
+export type ApiStatus =
+  | "checking"
+  | "online"
+  | "offline"
+
 type SidebarProps = {
   activeView: ActiveView
   isLoading: boolean
+  apiStatus: ApiStatus
   onNewChat: () => void
   onViewChange: (view: ActiveView) => void
+}
+
+const statusContent: Record<
+  ApiStatus,
+  {
+    label: string
+    className: string
+  }
+> = {
+  checking: {
+    label: "Sistem kontrol ediliyor",
+    className: "checking",
+  },
+  online: {
+    label: "Sistem hazır",
+    className: "online",
+  },
+  offline: {
+    label: "Sistem çevrimdışı",
+    className: "offline",
+  },
 }
 
 function Sidebar({
   activeView,
   isLoading,
+  apiStatus,
   onNewChat,
   onViewChange,
 }: SidebarProps) {
+  const currentStatus = statusContent[apiStatus]
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -71,9 +101,15 @@ function Sidebar({
         </button>
       </nav>
 
-      <div className="sidebar-footer">
-        <span className="status-dot" />
-        Sistem hazır
+      <div
+        className="sidebar-footer"
+        aria-live="polite"
+      >
+        <span
+          className={`status-dot ${currentStatus.className}`}
+        />
+
+        {currentStatus.label}
       </div>
     </aside>
   )

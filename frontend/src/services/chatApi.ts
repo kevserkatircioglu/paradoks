@@ -44,3 +44,20 @@ export async function sendChatMessage(
 
   return (await response.json()) as ChatResponse
 }
+
+export async function checkApiHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/`, {
+      method: "GET",
+    })
+
+    return response.ok
+  } catch (error) {
+    console.error(
+      "Backend sağlık kontrolü başarısız oldu:",
+      error,
+    )
+
+    return false
+  }
+}
