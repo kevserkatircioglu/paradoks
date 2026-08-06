@@ -1,121 +1,101 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import "./App.css"
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">P</div>
+
+          <div className="brand-text">
+            <strong>Paradoks</strong>
+            <span>Standart Asistanı</span>
+          </div>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
+
+        <button type="button" className="new-chat-button">
+          + Yeni sohbet
         </button>
-      </section>
 
-      <div className="ticks"></div>
+        <nav className="sidebar-nav" aria-label="Ana menü">
+          <button type="button" className="nav-item active">
+            Sohbet
+          </button>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          <button type="button" className="nav-item">
+            Kaynaklar
+          </button>
+
+          <button type="button" className="nav-item">
+            Geçmiş
+          </button>
+        </nav>
+
+        <div className="sidebar-footer">
+          <span className="status-dot" />
+          Sistem hazır
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      </aside>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <main className="chat-page">
+        <header className="chat-header">
+          <div>
+            <h1>Paradoks</h1>
+            <p>Telekom standartları yapay zekâ asistanı</p>
+          </div>
+
+          <button type="button" className="source-button">
+            Kaynakları görüntüle
+          </button>
+        </header>
+
+        <section className="welcome-section">
+          <div className="welcome-icon">P</div>
+
+          <h2>Standartlar arasında kaybolmadan sorun.</h2>
+
+          <p>
+            3GPP ve ilişkili telekom dokümanları hakkında sorularınızı
+            kaynaklara dayalı olarak yanıtlayın.
+          </p>
+
+          <div className="suggestion-grid">
+            <button type="button">
+              5G ağ mimarisinin temel bileşenleri nelerdir?
+            </button>
+
+            <button type="button">
+              Bir 3GPP teknik şartnamesini özetler misin?
+            </button>
+
+            <button type="button">
+              İki farklı standart arasındaki ilişkiyi açıkla.
+            </button>
+          </div>
+        </section>
+
+        <form
+          className="prompt-area"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <div className="prompt-box">
+            <textarea
+              rows={1}
+              aria-label="Mesaj"
+              placeholder="Telekom standartları hakkında bir soru sorun..."
+            />
+
+            <button type="submit" className="send-button">
+              Gönder
+            </button>
+          </div>
+
+          <p className="prompt-note">
+            Yanıtlar yüklenen ve erişilebilen kaynaklara göre oluşturulur.
+          </p>
+        </form>
+      </main>
+    </div>
   )
 }
 
