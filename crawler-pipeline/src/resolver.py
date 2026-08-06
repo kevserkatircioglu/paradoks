@@ -1,0 +1,182 @@
+"""Resolves a Reference to a real, verified document URL.
+
+Unlike string-pattern guessing, this actually fetches directory/index
+pages and parses their real links -- because org URL structures (e.g.
+ETSI's version subfolders) aren't reliably guessable.
+
+Chain per org:
+    3GPP  -> fetch archive folder listing, pick latest version, find file
+    IETF  -> deterministic (rfc-editor.org URL pattern is stable, no versions)
+    ETSI  -> fetch folder listing twice (range folder, then version folder)
+    ITU-T -> fetch the T-REC landing page, parse for a free PDF link
+    GSMA / ATIS -> no reliable folder structure; site-restricted search
+"""
+
+import os
+import re
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+from dotenv import load_dotenv
+
+from models import Reference, ResolvedSource, DocStatus
+
+load_dotenv()
+API_KEY = os.environ.get("GOOGLE_API_KEY")
+CX = os.environ.get("GOOGLE_CX")
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; standards-crawler/1.0)"}
+TIMEOUT = 15
+
+
+def _get(url: str) -> requests.Response | None:
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        if resp.status_code == 200:
+            return resp
+    except requests.RequestException:
+        pass
+    return None
+
+
+def _links(resp: requests.Response) -> list[str]:
+    soup = BeautifulSoup(resp.text, "html.parser")
+    return [a.get("href", "") for a in soup.find_all("a") if a.get("href")]
+
+
+# --- 3GPP ---------------------------------------------------------------
+
+def _resolve_3gpp(ref: Reference) -> ResolvedSource:
+    parts = ref.code.split()
+    if len(parts) != 2:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+
+    series = parts[1].split(".")[0]
+    folder_url = f"https://www.3gpp.org/ftp/Specs/archive/{series}_series/{parts[1]}/"
+    resp = _get(folder_url)
+    if not resp:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+
+    # 3GPP folders list versioned .zip files, e.g. 23041-k00.zip
+    zip_links = [l for l in _links(resp) if l.lower().endswith(".zip")]
+    if not zip_links:
+        return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=folder_url)
+
+    latest = sorted(zip_links)[-1]
+    file_url = urljoin(folder_url, latest)
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=file_url, version=latest)
+
+
+# --- IETF -----------------------------------------------------------------
+
+def _resolve_ietf(ref: Reference) -> ResolvedSource:
+    url = f"https://www.rfc-editor.org/rfc/rfc{ref.code.strip()}.html"
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=url)
+
+
+# --- ETSI ------------------------------------------------------------------
+
+def _resolve_etsi(ref: Reference) -> ResolvedSource:
+    code_clean = re.sub(r"[A-Z]+", "", ref.code).strip()  # "TS 102 900" -> "102 900"
+    digits = code_clean.replace(" ", "")
+    if len(digits) < 6:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+
+    range_start = digits[:-2] + "00"
+    range_end = digits[:-2] + "99"
+    range_folder = f"https://www.etsi.org/deliver/etsi_ts/{range_start}_{range_end}/"
+
+    resp = _get(range_folder)
+    if not resp:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+
+    code_folder_url = next(
+        (urljoin(range_folder, l) for l in _links(resp) if digits in l), None
+    )
+    if not code_folder_url:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+    if not code_folder_url.endswith("/"):
+        code_folder_url += "/"
+
+    resp2 = _get(code_folder_url)
+    if not resp2:
+        return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=code_folder_url)
+
+    version_urls = [urljoin(code_folder_url, l) for l in _links(resp2) if re.match(r"^\d", l)]
+    if not version_urls:
+        return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=code_folder_url)
+
+    version_url = sorted(version_urls)[-1]
+    if not version_url.endswith("/"):
+        version_url += "/"
+
+    resp3 = _get(version_url)
+    if not resp3:
+        return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=version_url)
+
+    pdf_url = next((urljoin(version_url, l) for l in _links(resp3) if l.lower().endswith(".pdf")), None)
+    if pdf_url:
+        return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=pdf_url)
+
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=version_url)
+
+
+# --- ITU-T -------------------------------------------------------------
+
+def _resolve_itu(ref: Reference) -> ResolvedSource:
+    code_clean = ref.code.strip()
+    landing_url = f"https://www.itu.int/rec/T-REC-{code_clean}/en"
+    resp = _get(landing_url)
+    if not resp:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+
+    pdf_link = next((l for l in _links(resp) if l.lower().endswith(".pdf")), None)
+    if pdf_link:
+        return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=urljoin(landing_url, pdf_link))
+
+    # no free PDF link found on the landing page -> likely paywalled/restricted
+    return ResolvedSource(reference=ref, status=DocStatus.BLOCKED, source_url=landing_url)
+
+
+# --- GSMA / ATIS: Google Araması Yerine Deterministik Yapı ----------
+
+def _resolve_gsma(ref: Reference) -> ResolvedSource:
+    code_clean = ref.code.strip()
+    url = f"https://www.gsma.com/newsroom/all-documents/?search={code_clean}"
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=url)
+
+
+def _resolve_atis(ref: Reference) -> ResolvedSource:
+    code_clean = ref.code.replace("ATIS-", "").replace("-", "").strip()
+    url = f"https://webstore.ansi.org/Standards/ATIS/atis{code_clean}"
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=url)
+
+
+# Tüm kurumların işleyicilerini (handler) eşleştiriyoruz
+RESOLVERS = {
+    "3GPP": _resolve_3gpp,
+    "IETF": _resolve_ietf,
+    "ETSI": _resolve_etsi,
+    "ITU-T": _resolve_itu,
+    "GSMA": _resolve_gsma,
+    "ATIS": _resolve_atis,
+}
+
+def resolve(ref: Reference) -> ResolvedSource:
+    handler = RESOLVERS.get(ref.org)
+    if not handler:
+        return ResolvedSource(reference=ref, status=DocStatus.UNRESOLVED)
+    return handler(ref)
+
+if __name__ == "__main__":
+    tests = [
+        Reference(org="3GPP", code="TS 23.041", title="", raw_text=""),
+        Reference(org="IETF", code="4960", title="", raw_text=""),
+        Reference(org="ETSI", code="TS 102 900", title="", raw_text=""),
+        Reference(org="ITU-T", code="G.711", title="", raw_text=""),
+        Reference(org="GSMA", code="AD.26", title="", raw_text=""),
+        Reference(org="ATIS", code="0700041", title="", raw_text=""),
+    ]
+    for ref in tests:
+        result = resolve(ref)
+        print(f"{ref.org:6s} {ref.code:15s} -> [{result.status.value}] {result.source_url}")
