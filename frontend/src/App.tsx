@@ -22,7 +22,40 @@ import {
   type Source,
 } from "./services/chatApi"
 
+import {
+  loadConversations,
+  saveConversations,
+  type SavedConversation,
+} from "./services/historyStorage"
+
 import "./App.css"
+
+function createConversationId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    "randomUUID" in crypto
+  ) {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`
+}
+
+function createConversationTitle(
+  question: string,
+): string {
+  const normalizedQuestion = question
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (normalizedQuestion.length <= 58) {
+    return normalizedQuestion
+  }
+
+  return `${normalizedQuestion.slice(0, 58)}…`
+}
 
 function App() {
   const [question, setQuestion] = useState("")
@@ -34,6 +67,25 @@ function App() {
 
   const [isSourcesPanelOpen, setIsSourcesPanelOpen] =
     useState(false)
+
+  const [
+    currentConversationId,
+    setCurrentConversationId,
+  ] = useState<string | null>(null)
+
+  const [conversations, setConversations] = useState<
+    SavedConversation[]
+  >(() =>
+    loadConversations().sort(
+      (firstConversation, secondConversation) =>
+        new Date(
+          secondConversation.updatedAt,
+        ).getTime() -
+        new Date(
+          firstConversation.updatedAt,
+        ).getTime(),
+    ),
+  )
 
   const mainRef = useRef<HTMLElement>(null)
 
@@ -60,6 +112,10 @@ function App() {
   }, [messages])
 
   useEffect(() => {
+    saveConversations(conversations)
+  }, [conversations])
+
+  useEffect(() => {
     setIsSourcesPanelOpen(false)
 
     requestAnimationFrame(() => {
@@ -83,6 +139,42 @@ function App() {
     })
   }, [activeView])
 
+  const appendMessageToConversation = (
+    conversationId: string,
+    message: Message,
+  ) => {
+    const updatedAt = new Date().toISOString()
+
+    setConversations((currentConversations) => {
+      const existingConversation =
+        currentConversations.find(
+          (conversation) =>
+            conversation.id === conversationId,
+        )
+
+      if (!existingConversation) {
+        return currentConversations
+      }
+
+      const updatedConversation: SavedConversation = {
+        ...existingConversation,
+        updatedAt,
+        messages: [
+          ...existingConversation.messages,
+          message,
+        ],
+      }
+
+      return [
+        updatedConversation,
+        ...currentConversations.filter(
+          (conversation) =>
+            conversation.id !== conversationId,
+        ),
+      ]
+    })
+  }
+
   const handleSubmit = async (
     event: FormEvent<HTMLFormElement>,
   ) => {
@@ -98,6 +190,39 @@ function App() {
       id: Date.now(),
       role: "user",
       content: trimmedQuestion,
+    }
+
+    const resolvedConversationId =
+      currentConversationId ??
+      createConversationId()
+
+    if (!currentConversationId) {
+      const createdAt = new Date().toISOString()
+
+      const newConversation: SavedConversation = {
+        id: resolvedConversationId,
+        title:
+          createConversationTitle(trimmedQuestion),
+        createdAt,
+        updatedAt: createdAt,
+        messages: [userMessage],
+      }
+
+      setCurrentConversationId(
+        resolvedConversationId,
+      )
+
+      setConversations(
+        (currentConversations) => [
+          newConversation,
+          ...currentConversations,
+        ],
+      )
+    } else {
+      appendMessageToConversation(
+        resolvedConversationId,
+        userMessage,
+      )
     }
 
     setMessages((currentMessages) => [
@@ -124,6 +249,11 @@ function App() {
         ...currentMessages,
         assistantMessage,
       ])
+
+      appendMessageToConversation(
+        resolvedConversationId,
+        assistantMessage,
+      )
     } catch (error) {
       console.error(
         "Sohbet isteği başarısız oldu:",
@@ -141,6 +271,11 @@ function App() {
         ...currentMessages,
         errorMessage,
       ])
+
+      appendMessageToConversation(
+        resolvedConversationId,
+        errorMessage,
+      )
     } finally {
       setIsLoading(false)
     }
@@ -151,10 +286,42 @@ function App() {
       return
     }
 
+    setCurrentConversationId(null)
     setMessages([])
     setQuestion("")
     setActiveView("chat")
     setIsSourcesPanelOpen(false)
+  }
+
+  const handleOpenConversation = (
+    conversation: SavedConversation,
+  ) => {
+    setCurrentConversationId(conversation.id)
+    setMessages(conversation.messages)
+    setQuestion("")
+    setIsSourcesPanelOpen(false)
+    setActiveView("chat")
+  }
+
+  const handleDeleteConversation = (
+    conversationId: string,
+  ) => {
+    setConversations(
+      (currentConversations) =>
+        currentConversations.filter(
+          (conversation) =>
+            conversation.id !== conversationId,
+        ),
+    )
+
+    if (
+      currentConversationId === conversationId
+    ) {
+      setCurrentConversationId(null)
+      setMessages([])
+      setQuestion("")
+      setIsSourcesPanelOpen(false)
+    }
   }
 
   return (
@@ -195,7 +362,15 @@ function App() {
         )}
 
         {activeView === "history" && (
-          <HistoryView />
+          <HistoryView
+            conversations={conversations}
+            onOpenConversation={
+              handleOpenConversation
+            }
+            onDeleteConversation={
+              handleDeleteConversation
+            }
+          />
         )}
       </main>
 
