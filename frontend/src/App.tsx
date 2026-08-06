@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useMemo, useState, type FormEvent } from "react"
 import {
   sendChatMessage,
   type Source,
@@ -22,6 +22,31 @@ function App() {
   const [question, setQuestion] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
+
+  const [isSourcesPanelOpen, setIsSourcesPanelOpen] =
+  useState(false)
+
+const conversationSources = useMemo(() => {
+  const uniqueSources = new Map<string, Source>()
+
+  messages.forEach((message) => {
+    message.sources?.forEach((source) => {
+      const sourceKey = [
+        source.org,
+        source.code,
+        source.version,
+        source.clause,
+        source.source_url,
+      ].join("-")
+
+      if (!uniqueSources.has(sourceKey)) {
+        uniqueSources.set(sourceKey, source)
+      }
+    })
+  })
+
+  return Array.from(uniqueSources.values())
+}, [messages])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -136,7 +161,13 @@ function App() {
             <p>Telekom standartları yapay zekâ asistanı</p>
           </div>
 
-          <button type="button" className="source-button">
+         <button
+            type="button"
+            className="source-button"
+            aria-controls="sources-panel"
+            aria-expanded={isSourcesPanelOpen}
+            onClick={() => setIsSourcesPanelOpen(true)}
+          >
             Kaynakları görüntüle
           </button>
         </header>
@@ -269,6 +300,91 @@ function App() {
           </p>
         </form>
       </main>
+              {isSourcesPanelOpen && (
+  <>
+    <button
+      type="button"
+      className="sources-panel-backdrop"
+      aria-label="Kaynak panelini kapat"
+      onClick={() => setIsSourcesPanelOpen(false)}
+    />
+
+    <aside
+      id="sources-panel"
+      className="sources-panel"
+      aria-label="Sohbette kullanılan kaynaklar"
+    >
+      <header className="sources-panel-header">
+        <div>
+          <h2>Sohbet kaynakları</h2>
+          <p>
+            Bu konuşmada yanıtlara dayanak olarak kullanılan dokümanlar.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="sources-panel-close"
+          aria-label="Kaynak panelini kapat"
+          onClick={() => setIsSourcesPanelOpen(false)}
+        >
+          ×
+        </button>
+      </header>
+
+      <div className="sources-panel-content">
+        {conversationSources.length === 0 ? (
+          <div className="sources-empty-state">
+            <div className="sources-empty-icon">P</div>
+
+            <h3>Henüz kaynak bulunmuyor</h3>
+
+            <p>
+              Backend bir yanıtta kaynak döndürdüğünde ilgili standartlar
+              burada listelenecek.
+            </p>
+          </div>
+        ) : (
+          <div className="sources-panel-list">
+            {conversationSources.map((source, index) => (
+              <article
+                key={`${source.code}-${source.clause}-${index}`}
+                className="message-source-card"
+              >
+                <div className="source-card-header">
+                  <strong>
+                    {source.org} {source.code}
+                  </strong>
+
+                  <span>{source.status}</span>
+                </div>
+
+                <div className="source-card-details">
+                  <span>Sürüm: {source.version}</span>
+                  <span>Madde: {source.clause}</span>
+                  <span>
+                    Uzaklık: {source.distance.toFixed(3)}
+                  </span>
+                </div>
+
+                {source.source_url && (
+                  <a
+                    href={source.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Kaynağı görüntüle
+                  </a>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </aside>
+  </>
+)}
+
     </div>
   )
 }
