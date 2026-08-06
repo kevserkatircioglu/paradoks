@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react"
+import { sendChatMessage } from "./services/chatApi"
 import "./App.css"
 
 type Message = {
@@ -16,13 +17,14 @@ const suggestions = [
 function App() {
   const [question, setQuestion] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
     const trimmedQuestion = question.trim()
 
-    if (!trimmedQuestion) {
+    if (!trimmedQuestion || isLoading) {
       return
     }
 
@@ -32,23 +34,51 @@ function App() {
       content: trimmedQuestion,
     }
 
-    const temporaryAssistantMessage: Message = {
-      id: Date.now() + 1,
-      role: "assistant",
-      content:
-        "Mesajınız başarıyla alındı. Bir sonraki aşamada bu soru backend servisine gönderilerek kaynaklara dayalı gerçek bir yanıt oluşturulacak.",
-    }
-
     setMessages((currentMessages) => [
       ...currentMessages,
       userMessage,
-      temporaryAssistantMessage,
     ])
 
     setQuestion("")
+    setIsLoading(true)
+
+    try {
+      const response = await sendChatMessage(trimmedQuestion)
+
+      const assistantMessage: Message = {
+        id: Date.now() + 1,
+        role: "assistant",
+        content: response.reply,
+      }
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        assistantMessage,
+      ])
+    } catch (error) {
+      console.error("Sohbet isteği başarısız oldu:", error)
+
+      const errorMessage: Message = {
+        id: Date.now() + 1,
+        role: "assistant",
+        content:
+          "Backend servisine ulaşılamadı. Lütfen FastAPI sunucusunun çalıştığını kontrol edin.",
+      }
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        errorMessage,
+      ])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleNewChat = () => {
+    if (isLoading) {
+      return
+    }
+
     setMessages([])
     setQuestion("")
   }
@@ -69,6 +99,7 @@ function App() {
           type="button"
           className="new-chat-button"
           onClick={handleNewChat}
+          disabled={isLoading}
         >
           + Yeni sohbet
         </button>
@@ -122,6 +153,7 @@ function App() {
                   key={suggestion}
                   type="button"
                   onClick={() => setQuestion(suggestion)}
+                  disabled={isLoading}
                 >
                   {suggestion}
                 </button>
@@ -129,15 +161,28 @@ function App() {
             </div>
           </section>
         ) : (
-          <section className="messages-section" aria-label="Sohbet mesajları">
+          <section
+            className="messages-section"
+            aria-label="Sohbet mesajları"
+          >
             {messages.map((message) => (
               <div
                 key={message.id}
                 className={`message-row ${message.role}`}
               >
-                <div className="message-bubble">{message.content}</div>
+                <div className="message-bubble">
+                  {message.content}
+                </div>
               </div>
             ))}
+
+            {isLoading && (
+              <div className="message-row assistant">
+                <div className="message-bubble">
+                  Yanıt hazırlanıyor...
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -148,9 +193,14 @@ function App() {
               aria-label="Mesaj"
               placeholder="Telekom standartları hakkında bir soru sorun..."
               value={question}
+              disabled={isLoading}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !isLoading
+                ) {
                   event.preventDefault()
                   event.currentTarget.form?.requestSubmit()
                 }
@@ -160,9 +210,9 @@ function App() {
             <button
               type="submit"
               className="send-button"
-              disabled={!question.trim()}
+              disabled={!question.trim() || isLoading}
             >
-              Gönder
+              {isLoading ? "Bekleyin" : "Gönder"}
             </button>
           </div>
 
