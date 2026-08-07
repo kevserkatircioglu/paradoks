@@ -21,10 +21,11 @@ def generate_reply(message: str) -> dict[str, Any]:
     )
 
     available_results = [
-        result
-        for result in results
-        if result["metadata"].get("status") == "available"
-    ]
+    result
+    for result in results
+    if result["metadata"].get("status")
+    in {"available", "indexed"}
+]
 
     blocked_results = [
         result
