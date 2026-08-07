@@ -47,11 +47,22 @@ export async function sendChatMessage(
 
 export async function checkApiHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE_URL}/`, {
-      method: "GET",
-    })
+    const response = await fetch(
+      `${API_BASE_URL}/health`,
+      {
+        method: "GET",
+      },
+    )
 
-    return response.ok
+    if (!response.ok) {
+      return false
+    }
+
+    const result = (await response.json()) as {
+      status?: string
+    }
+
+    return result.status === "ok"
   } catch (error) {
     console.error(
       "Backend sağlık kontrolü başarısız oldu:",
