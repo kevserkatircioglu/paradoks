@@ -15,14 +15,9 @@ EMBEDDING_MODEL_NAME = os.getenv(
     "intfloat/multilingual-e5-small",
 )
 
-chroma_path_value = Path(
-    os.getenv("CHROMA_DB_PATH", "vector_db")
-)
-
-CHROMA_DB_PATH = (
-    chroma_path_value
-    if chroma_path_value.is_absolute()
-    else BASE_DIR / chroma_path_value
+CHROMA_DB_PATH = os.getenv(
+    "CHROMA_DB_PATH",
+    "vector_db",
 )
 
 CHROMA_COLLECTION_NAME = os.getenv(
