@@ -14,6 +14,14 @@ python main.py \
     --seed data/seeds/23041-k00.docx \
     --output-db backend/vector_db_v2 \
     --resume
+
+Crawler cache'i tamamen yenileyerek devam:
+
+python main.py \
+    --seed data/seeds/23041-k00.docx \
+    --output-db backend/vector_db_v2 \
+    --resume \
+    --refresh-cache
 """
 
 import argparse
@@ -30,6 +38,12 @@ BASE_DIR = Path(
 SRC_DIR = (
     BASE_DIR
     / "src"
+)
+
+DEFAULT_CACHE_DIR = (
+    BASE_DIR
+    / "data"
+    / "crawler_cache"
 )
 
 sys.path.insert(
@@ -70,7 +84,7 @@ def extract_references_text(
     full_text: str,
 ) -> str:
     """
-    3GPP seed dokümanındaki References bölümünü ayırır.
+    Seed dokümanındaki References bölümünü ayırır.
     """
 
     match = re.search(
@@ -152,6 +166,26 @@ def main():
         ),
     )
 
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help=(
+            "Crawler disk cache'ini çalıştırma "
+            "öncesinde tamamen temizle."
+        ),
+    )
+
+    parser.add_argument(
+        "--cache-dir",
+        default=str(
+            DEFAULT_CACHE_DIR
+        ),
+        help=(
+            "Crawler cache klasörü. "
+            "Default: data/crawler_cache"
+        ),
+    )
+
     args = parser.parse_args()
 
     if (
@@ -187,8 +221,18 @@ def main():
             / output_db
         )
 
+    cache_dir = Path(
+        args.cache_dir
+    )
+
+    if not cache_dir.is_absolute():
+        cache_dir = (
+            BASE_DIR
+            / cache_dir
+        )
+
     # -----------------------------------------------------
-    # SEED
+    # SEED KONTROL
     # -----------------------------------------------------
     if not seed_path.exists():
         print(
@@ -209,6 +253,36 @@ def main():
     print(
         "Vector DB:",
         output_db.resolve(),
+    )
+
+    print(
+        "Crawler cache:",
+        cache_dir.resolve(),
+    )
+
+    # -----------------------------------------------------
+    # CACHE MODE
+    # -----------------------------------------------------
+    if args.refresh_cache:
+        print()
+
+        if cache_dir.exists():
+            print(
+                "[CACHE] Mevcut crawler cache "
+                "siliniyor..."
+            )
+
+            shutil.rmtree(
+                cache_dir
+            )
+
+        print(
+            "[CACHE] Cache temizlendi."
+        )
+
+    cache_dir.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
     # -----------------------------------------------------
@@ -321,13 +395,9 @@ def main():
         "4. Recursive crawler başlıyor..."
     )
 
-    print(
-        "NOT: Crawler metinleri önceki çalışmada "
-        "RAM'de tutulduğu için crawler aşaması "
-        "yeniden çalışacaktır."
+    crawler = Crawler(
+        cache_dir=cache_dir
     )
-
-    crawler = Crawler()
 
     crawler.seed(
         seed_refs
@@ -405,6 +475,10 @@ def main():
 
     zero_chunk_documents = 0
 
+    zero_chunk_list: list[
+        tuple[str, str]
+    ] = []
+
     # -----------------------------------------------------
     # 6. CHUNK + EMBED + UPSERT
     # -----------------------------------------------------
@@ -471,6 +545,13 @@ def main():
 
         if not chunks:
             zero_chunk_documents += 1
+
+            zero_chunk_list.append(
+                (
+                    org,
+                    code,
+                )
+            )
 
         written = (
             store.upsert_chunks(
@@ -540,6 +621,19 @@ def main():
         "Vector DB:",
         output_db.resolve(),
     )
+
+    if zero_chunk_list:
+        print()
+        print("-" * 70)
+        print(
+            "0 CHUNK URETEN DOKUMANLAR"
+        )
+        print("-" * 70)
+
+        for org, code in zero_chunk_list:
+            print(
+                f"{org} {code}"
+            )
 
     print("=" * 70)
 
