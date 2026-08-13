@@ -1,91 +1,316 @@
 """
-Fetches a document from a URL and extracts its text content[cite: 5].
+Fetches a document from a URL and extracts its text content.
 
 Does NOT persist files to disk long-term -- downloads into memory
-(or a temp file, cleaned up after), extracts text, returns the string[cite: 5].
-Supports pdf, docx, and plain html pages[cite: 5].
+(or a temp file, cleaned up after), extracts text, returns the string.
+
+Supports PDF, DOCX, ZIP and plain HTML pages.
 """
 
 import io
+import re
 import zipfile
+
 import requests
 from bs4 import BeautifulSoup
 
-# Pretend to be a legitimate browser/crawler so websites don't block the request[cite: 5]
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; standards-crawler/1.0)"}
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 "
+        "(compatible; standards-crawler/1.0)"
+    )
+}
+
 TIMEOUT = 30
 
 
-def fetch_and_read(url: str) -> str | None:
+def fetch_and_read(
+    url: str,
+) -> str | None:
     """
-    Main entry point. Takes a URL, downloads the payload, identifies the file type,
-    and routes it to the appropriate text extraction function.
+    URL'deki dokümanı indirir ve metin içeriğini döndürür.
+
+    Desteklenen biçimler:
+    - PDF
+    - DOCX
+    - ZIP içindeki DOCX dosyaları
+    - HTML
     """
+
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        resp = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=TIMEOUT,
+        )
+
     except requests.RequestException:
         return None
 
-    # Ensure the download was actually successful
     if resp.status_code != 200:
         return None
 
-    content_type = resp.headers.get("Content-Type", "").lower()
-    lower_url = url.lower()
+    content_type = (
+        resp.headers.get(
+            "Content-Type",
+            "",
+        ).lower()
+    )
 
-    # Route to the correct parser based on file extension or HTTP Content-Type headers[cite: 5]
-    if lower_url.endswith(".pdf") or "application/pdf" in content_type:
-        return _read_pdf(resp.content)
-    if lower_url.endswith(".docx") or "wordprocessingml" in content_type:
-        return _read_docx(resp.content)
-    if lower_url.endswith(".zip"):
-        return _read_zip(resp.content)  # 3GPP publishes zipped docx files[cite: 5]
-    
-    # Fallback: if it's not a document, treat it as a standard HTML webpage[cite: 5]
-    return _read_html(resp.text)
+    lower_url = (
+        url.lower()
+    )
+
+    # -----------------------------------------------------
+    # PDF
+    # -----------------------------------------------------
+    if (
+        lower_url.endswith(".pdf")
+        or "application/pdf"
+        in content_type
+    ):
+        return _read_pdf(
+            resp.content
+        )
+
+    # -----------------------------------------------------
+    # DOCX
+    # -----------------------------------------------------
+    if (
+        lower_url.endswith(".docx")
+        or "wordprocessingml"
+        in content_type
+    ):
+        return _read_docx(
+            resp.content
+        )
+
+    # -----------------------------------------------------
+    # ZIP
+    # -----------------------------------------------------
+    if (
+        lower_url.endswith(".zip")
+        or "application/zip"
+        in content_type
+        or "application/x-zip-compressed"
+        in content_type
+    ):
+        return _read_zip(
+            resp.content
+        )
+
+    # -----------------------------------------------------
+    # HTML
+    # -----------------------------------------------------
+    return _read_html(
+        resp.text
+    )
 
 
-def _read_pdf(raw_bytes: bytes) -> str:
+def _read_pdf(
+    raw_bytes: bytes,
+) -> str:
     """
-    Loads raw PDF bytes directly into memory (BytesIO) and extracts text page by page.
+    PDF içeriğini sayfa sayfa okuyarak metne çevirir.
     """
+
     import pdfplumber
-    text_parts = []
-    # io.BytesIO tricks pdfplumber into thinking it's reading a real file from the disk
-    with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+
+    text_parts: list[str] = []
+
+    with pdfplumber.open(
+        io.BytesIO(
+            raw_bytes
+        )
+    ) as pdf:
+
         for page in pdf.pages:
-            text_parts.append(page.extract_text() or "")
-    return "\n".join(text_parts)
+            text_parts.append(
+                page.extract_text()
+                or ""
+            )
+
+    return "\n".join(
+        text_parts
+    )
 
 
-def _read_docx(raw_bytes: bytes) -> str:
+def _read_docx(
+    raw_bytes: bytes,
+) -> str:
     """
-    Loads raw DOCX bytes into memory and extracts text from all paragraphs.
+    DOCX dosyasındaki paragraph metinlerini çıkarır.
     """
+
     import docx
-    doc = docx.Document(io.BytesIO(raw_bytes))
-    return "\n".join(p.text for p in doc.paragraphs)
+
+    doc = docx.Document(
+        io.BytesIO(
+            raw_bytes
+        )
+    )
+
+    return "\n".join(
+        paragraph.text
+        for paragraph
+        in doc.paragraphs
+    )
 
 
-def _read_zip(raw_bytes: bytes) -> str:
+def _docx_sort_key(
+    filename: str,
+) -> tuple[int, str]:
     """
-    Specifically designed for 3GPP archives. Opens the zip in memory, 
-    finds the internal DOCX file, and extracts its text[cite: 5].
+    3GPP'nin çok parçalı DOCX paketlerini doğru sıraya dizer.
+
+    Örnek:
+
+    24501-k00_0_cover.docx
+    24501-k00_1_Main-Body_s00_s04.docx
+    24501-k00_2_Main-Body_s05_s0504.docx
+    ...
+    24501-k00_6_Annexes_sA_sHistory.docx
+
+    Dosya adındaki _0_, _1_, _2_ gibi sıra numarasını kullanır.
     """
-    with zipfile.ZipFile(io.BytesIO(raw_bytes)) as z:
-        # Find the first file inside the zip that ends with .docx[cite: 5]
-        docx_names = [n for n in z.namelist() if n.lower().endswith(".docx")]
+
+    basename = (
+        filename
+        .replace("\\", "/")
+        .split("/")[-1]
+    )
+
+    match = re.search(
+        r"_(\d+)_",
+        basename,
+    )
+
+    if match:
+        return (
+            int(
+                match.group(1)
+            ),
+            basename.lower(),
+        )
+
+    # Sıra numarası olmayan DOCX'ler
+    # numaralı parçaların sonuna gider.
+    return (
+        999999,
+        basename.lower(),
+    )
+
+
+def _read_zip(
+    raw_bytes: bytes,
+) -> str:
+    """
+    ZIP içindeki TÜM DOCX dosyalarını okur.
+
+    3GPP'nin büyük standartları bazen tek DOCX yerine
+    birden fazla Word dosyasına bölünmüş olarak yayınlanır.
+
+    Örneğin TS 24.501:
+        0_cover
+        1_Main-Body
+        2_Main-Body
+        ...
+        6_Annexes
+
+    Eski davranış yalnızca ilk DOCX'i okuyordu.
+    Bu nedenle TS 24.501 gibi çok parçalı standartların
+    ana gövdesi kaybolabiliyordu.
+
+    Yeni davranış bütün DOCX parçalarını mantıksal sıraya
+    koyar, tek tek okur ve tek bir doküman metni olarak
+    birleştirir.
+    """
+
+    with zipfile.ZipFile(
+        io.BytesIO(
+            raw_bytes
+        )
+    ) as archive:
+
+        docx_names = [
+            name
+            for name
+            in archive.namelist()
+            if name.lower().endswith(
+                ".docx"
+            )
+            and not name.startswith(
+                "__MACOSX/"
+            )
+            and not name.split("/")[-1].startswith(
+                "~$"
+            )
+        ]
+
         if not docx_names:
             return ""
-        # Open that inner file and pass it to our DOCX reader[cite: 5]
-        with z.open(docx_names[0]) as f:
-            return _read_docx(f.read())
+
+        docx_names.sort(
+            key=_docx_sort_key
+        )
+
+        text_parts: list[str] = []
+
+        for docx_name in docx_names:
+            try:
+                with archive.open(
+                    docx_name
+                ) as file:
+                    raw_docx = (
+                        file.read()
+                    )
+
+                extracted_text = (
+                    _read_docx(
+                        raw_docx
+                    )
+                ).strip()
+
+                if not extracted_text:
+                    continue
+
+                # Parçalar arasında açık sınır bırakıyoruz.
+                # Chunker gerçek clause başlıklarını yine
+                # kendi kurallarına göre tespit edecek.
+                text_parts.append(
+                    extracted_text
+                )
+
+            except Exception as error:
+                print(
+                    "[FETCHER] ZIP içindeki DOCX "
+                    "okunamadı:",
+                    docx_name,
+                    "|",
+                    error,
+                )
+
+                continue
+
+        return "\n\n".join(
+            text_parts
+        )
 
 
-def _read_html(html: str) -> str:
+def _read_html(
+    html: str,
+) -> str:
     """
-    Parses plain HTML using BeautifulSoup and extracts human-readable text,
-    stripping away all tags.
+    HTML sayfasındaki okunabilir metni çıkarır.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(separator="\n", strip=True)
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
+
+    return soup.get_text(
+        separator="\n",
+        strip=True,
+    )
