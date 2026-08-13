@@ -18,12 +18,19 @@ function SourceCard({
       </div>
 
       <div className="source-card-details">
-        <span>Sürüm: {source.version}</span>
-        <span>Madde: {source.clause}</span>
+        <span>
+          Sürüm: {source.version}
+        </span>
 
         <span>
-          Uzaklık: {source.distance.toFixed(3)}
+          Madde: {source.clause}
         </span>
+
+        {source.clause_title && (
+          <span>
+            Başlık: {source.clause_title}
+          </span>
+        )}
       </div>
 
       {source.source_url && (

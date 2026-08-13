@@ -10,6 +10,21 @@ function SourcesPanel({
   sources,
   onClose,
 }: SourcesPanelProps) {
+  const uniqueSources = Array.from(
+    new Map(
+      sources.map((source) => [
+        [
+          source.org,
+          source.code,
+          source.version,
+          source.clause,
+          source.source_url,
+        ].join("|"),
+        source,
+      ]),
+    ).values(),
+  )
+
   return (
     <>
       <button
@@ -45,13 +60,15 @@ function SourcesPanel({
         </header>
 
         <div className="sources-panel-content">
-          {sources.length === 0 ? (
+          {uniqueSources.length === 0 ? (
             <div className="sources-empty-state">
               <div className="sources-empty-icon">
                 P
               </div>
 
-              <h3>Henüz kaynak bulunmuyor</h3>
+              <h3>
+                Henüz kaynak bulunmuyor
+              </h3>
 
               <p>
                 Backend bir yanıtta kaynak
@@ -61,12 +78,20 @@ function SourcesPanel({
             </div>
           ) : (
             <div className="sources-panel-list">
-              {sources.map((source, index) => (
-                <SourceCard
-                  key={`${source.code}-${source.clause}-${index}`}
-                  source={source}
-                />
-              ))}
+              {uniqueSources.map(
+                (source) => (
+                  <SourceCard
+                    key={[
+                      source.org,
+                      source.code,
+                      source.version,
+                      source.clause,
+                      source.source_url,
+                    ].join("|")}
+                    source={source}
+                  />
+                ),
+              )}
             </div>
           )}
         </div>

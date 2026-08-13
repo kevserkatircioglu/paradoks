@@ -3,6 +3,7 @@ export type Source = {
   code: string
   version: string
   clause: string
+  clause_title?: string
   status: string
   source_url: string
   distance: number
@@ -21,20 +22,24 @@ export type ChatResponse = {
 }
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000"
+  import.meta.env.VITE_API_BASE_URL ??
+  "http://127.0.0.1:8000"
 
 export async function sendChatMessage(
   message: string,
 ): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE_URL}/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `${API_BASE_URL}/chat`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message,
+      }),
     },
-    body: JSON.stringify({
-      message,
-    }),
-  })
+  )
 
   if (!response.ok) {
     throw new Error(
@@ -42,7 +47,9 @@ export async function sendChatMessage(
     )
   }
 
-  return (await response.json()) as ChatResponse
+  return (
+    await response.json()
+  ) as ChatResponse
 }
 
 export async function checkApiHealth(): Promise<boolean> {
@@ -58,7 +65,9 @@ export async function checkApiHealth(): Promise<boolean> {
       return false
     }
 
-    const result = (await response.json()) as {
+    const result = (
+      await response.json()
+    ) as {
       status?: string
     }
 
