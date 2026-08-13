@@ -1,4 +1,4 @@
-﻿"""
+"""
 Embeds text chunks into vector representations and writes them
 to the Vector Database.
 
@@ -50,7 +50,7 @@ class VectorStore:
         )
 
         print(
-            "[VECTOR] Embedding modeli y├╝kleniyor..."
+            "[VECTOR] Embedding modeli yükleniyor..."
         )
 
         self.model = SentenceTransformer(
@@ -62,11 +62,15 @@ class VectorStore:
         text: str,
     ) -> list[float]:
         """
-        Tek bir metni E5 passage embedding'ine ├ğevirir.
+        Tek bir metni E5 passage embedding'ine çevirir.
         """
 
+        clean_text = (
+            text or ""
+        ).strip()
+
         formatted_text = (
-            f"passage: {text}"
+            f"passage: {clean_text}"
         )
 
         return self.model.encode(
@@ -78,66 +82,183 @@ class VectorStore:
         chunk: Chunk,
     ) -> str:
         """
-        Ayn─▒ chunk i├ğin her ├ğal─▒┼şt─▒rmada ayn─▒ ID ├╝retir.
+        Aynı içerik ve metadata kombinasyonu için
+        her çalıştırmada aynı deterministic ID üretir.
+
+        Baştaki/sondaki gereksiz boşluklar normalize edilir.
         """
 
         identity = "|".join(
             [
-                chunk.doc_org or "",
-                chunk.doc_code or "",
-                chunk.version or "",
-                chunk.clause or "",
-                chunk.text or "",
+                (
+                    chunk.doc_org
+                    or ""
+                ).strip(),
+                (
+                    chunk.doc_code
+                    or ""
+                ).strip(),
+                (
+                    chunk.version
+                    or ""
+                ).strip(),
+                (
+                    chunk.clause
+                    or ""
+                ).strip(),
+                (
+                    chunk.text
+                    or ""
+                ).strip(),
             ]
         )
 
         digest = hashlib.sha256(
-            identity.encode("utf-8")
+            identity.encode(
+                "utf-8"
+            )
         ).hexdigest()
 
         return f"chunk_{digest}"
+
+    def _prepare_unique_chunks(
+        self,
+        chunks: list[Chunk],
+    ) -> list[tuple[str, Chunk]]:
+        """
+        VOID, boş ve duplicate chunk'ları temizler.
+
+        Dönen yapı:
+            [
+                (chunk_id, chunk),
+                ...
+            ]
+
+        Aynı deterministic ID yalnızca bir kez tutulur.
+        """
+
+        unique_chunks: list[
+            tuple[str, Chunk]
+        ] = []
+
+        seen_ids: set[str] = set()
+
+        void_count = 0
+        empty_count = 0
+        duplicate_count = 0
+
+        for chunk in chunks:
+            # -----------------------------------------
+            # VOID
+            # -----------------------------------------
+            if chunk.status == DocStatus.VOID:
+                void_count += 1
+                continue
+
+            # -----------------------------------------
+            # BOŞ METİN
+            # -----------------------------------------
+            clean_text = (
+                chunk.text
+                or ""
+            ).strip()
+
+            if not clean_text:
+                empty_count += 1
+                continue
+
+            # Metni normalize edilmiş haliyle tut.
+            chunk.text = clean_text
+
+            # -----------------------------------------
+            # DETERMINISTIC ID
+            # -----------------------------------------
+            chunk_id = (
+                self._build_chunk_id(
+                    chunk
+                )
+            )
+
+            # -----------------------------------------
+            # DUPLICATE
+            # -----------------------------------------
+            if chunk_id in seen_ids:
+                duplicate_count += 1
+                continue
+
+            seen_ids.add(
+                chunk_id
+            )
+
+            unique_chunks.append(
+                (
+                    chunk_id,
+                    chunk,
+                )
+            )
+
+        print(
+            f"[VECTOR] Gelen chunk: "
+            f"{len(chunks)}"
+        )
+
+        if void_count:
+            print(
+                f"[VECTOR] VOID atlandı: "
+                f"{void_count}"
+            )
+
+        if empty_count:
+            print(
+                f"[VECTOR] Boş chunk atlandı: "
+                f"{empty_count}"
+            )
+
+        if duplicate_count:
+            print(
+                f"[VECTOR] Duplicate atlandı: "
+                f"{duplicate_count}"
+            )
+
+        print(
+            f"[VECTOR] Unique geçerli chunk: "
+            f"{len(unique_chunks)}"
+        )
+
+        return unique_chunks
 
     def upsert_chunks(
         self,
         chunks: list[Chunk],
     ) -> int:
         """
-        Chunk'lar─▒ batch olarak embed eder ve ChromaDB'ye yazar.
+        Chunk'ları temizler, deterministic ID'ye göre
+        duplicate kayıtları kaldırır, batch olarak embed eder
+        ve ChromaDB'ye yazar.
 
-        VOID ve bo┼ş chunk'lar indexlenmez.
+        VOID, boş ve aynı ID'ye sahip duplicate chunk'lar
+        indexlenmez.
         """
 
-        valid_chunks: list[Chunk] = []
-
-        for chunk in chunks:
-            if chunk.status == DocStatus.VOID:
-                continue
-
-            clean_text = (
-                chunk.text or ""
-            ).strip()
-
-            if not clean_text:
-                continue
-
-            valid_chunks.append(
-                chunk
+        # -------------------------------------------------
+        # 1. VALIDATION + DEDUP
+        # -------------------------------------------------
+        unique_chunks = (
+            self._prepare_unique_chunks(
+                chunks
             )
-
-        if not valid_chunks:
-            return 0
-
-        print(
-            f"[VECTOR] Ge├ğerli chunk: "
-            f"{len(valid_chunks)}"
         )
 
-        # ---------------------------------------------
-        # 1. Embeddingleri batch olu┼ştur
-        # ---------------------------------------------
+        if not unique_chunks:
+            return 0
+
+        # -------------------------------------------------
+        # 2. EMBEDDINGLERİ BATCH OLUŞTUR
+        # -------------------------------------------------
         formatted_texts = [
-            f"passage: {chunk.text.strip()}"
-            for chunk in valid_chunks
+            f"passage: {chunk.text}"
+            for chunk_id, chunk
+            in unique_chunks
         ]
 
         embeddings = self.model.encode(
@@ -146,45 +267,52 @@ class VectorStore:
             show_progress_bar=True,
         ).tolist()
 
-        # ---------------------------------------------
-        # 2. Chroma batch upsert
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # 3. CHROMA BATCH UPSERT
+        # -------------------------------------------------
         written = 0
 
         for start in tqdm(
             range(
                 0,
-                len(valid_chunks),
+                len(unique_chunks),
                 UPSERT_BATCH_SIZE,
             ),
             desc="Chroma batch upsert",
             unit="batch",
         ):
             end = (
-                start + UPSERT_BATCH_SIZE
+                start
+                + UPSERT_BATCH_SIZE
             )
 
-            batch_chunks = valid_chunks[
-                start:end
-            ]
+            batch_items = (
+                unique_chunks[
+                    start:end
+                ]
+            )
 
-            batch_embeddings = embeddings[
-                start:end
-            ]
+            batch_embeddings = (
+                embeddings[
+                    start:end
+                ]
+            )
 
-            ids = []
-            documents = []
-            metadatas = []
+            ids: list[str] = []
+            documents: list[str] = []
+            metadatas: list[dict] = []
 
-            for chunk in batch_chunks:
+            for (
+                chunk_id,
+                chunk,
+            ) in batch_items:
                 clean_text = (
-                    chunk.text or ""
+                    chunk.text
+                    or ""
                 ).strip()
 
                 ids.append(
-                    self._build_chunk_id(
-                        chunk
-                    )
+                    chunk_id
                 )
 
                 documents.append(
@@ -197,7 +325,9 @@ class VectorStore:
                         chunk.status,
                         "value",
                     )
-                    else str(chunk.status)
+                    else str(
+                        chunk.status
+                    )
                 )
 
                 metadatas.append(
@@ -230,6 +360,15 @@ class VectorStore:
                     }
                 )
 
+            # Ek güvenlik:
+            # Bu noktada batch içinde duplicate ID
+            # bulunmaması gerekir.
+            if len(ids) != len(set(ids)):
+                raise RuntimeError(
+                    "Chroma upsert öncesi batch içinde "
+                    "duplicate chunk ID tespit edildi."
+                )
+
             self.collection.upsert(
                 ids=ids,
                 embeddings=batch_embeddings,
@@ -238,7 +377,7 @@ class VectorStore:
             )
 
             written += len(
-                batch_chunks
+                batch_items
             )
 
         return written
