@@ -1,70 +1,244 @@
-"""
-Embeds text chunks into vector representations and writes them to the Vector Database.
-Uses ChromaDB (PersistentClient) under 'backend/vector_db' with 'intfloat/multilingual-e5-small'.
+﻿"""
+Embeds text chunks into vector representations and writes them
+to the Vector Database.
+
+Uses ChromaDB with intfloat/multilingual-e5-small.
 """
 
-import os
+import hashlib
+from pathlib import Path
+
 import chromadb
 from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
+
 from models import Chunk, DocStatus
-from tqdm import tqdm  # İlerleme çubuğu kütüphanesini ekledik!
+
+
+EMBEDDING_BATCH_SIZE = 8
+UPSERT_BATCH_SIZE = 256
 
 
 class VectorStore:
-    def __init__(self, collection_name: str = "telecom_standards"):
+    def __init__(
+        self,
+        db_path: str | Path,
+        collection_name: str = "telecom_standards",
+    ):
         self.collection_name = collection_name
-        
-        # Ensure the backend/vector_db directory exists as requested by teammate
-        db_path = os.path.join("backend", "vector_db")
-        os.makedirs(db_path, exist_ok=True)
-        
-        # Initialize local persistent ChromaDB client at the specified path
-        self.client = chromadb.PersistentClient(path=db_path)
-        self.collection = self.client.get_or_create_collection(collection_name)
-        
-        # Initialize the exact multilingual embedding model requested by teammate
-        self.model = SentenceTransformer("intfloat/multilingual-e5-small")
 
-    def embed(self, text: str) -> list[float]:
-        """
-        Converts human-readable text into a dense vector array (embeddings) 
-        using the intfloat/multilingual-e5-small model.
-        """
-        # For E5 models, prefixing text with "passage: " is recommended for documents
-        formatted_text = f"passage: {text}"
-        embedding = self.model.encode(formatted_text).tolist()
-        return embedding
+        self.db_path = Path(db_path)
 
-    def upsert_chunks(self, chunks: list[Chunk]) -> int:
+        self.db_path.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        print(
+            f"[VECTOR] DB yolu: "
+            f"{self.db_path.resolve()}"
+        )
+
+        self.client = chromadb.PersistentClient(
+            path=str(self.db_path)
+        )
+
+        self.collection = (
+            self.client.get_or_create_collection(
+                collection_name
+            )
+        )
+
+        print(
+            "[VECTOR] Embedding modeli y├╝kleniyor..."
+        )
+
+        self.model = SentenceTransformer(
+            "intfloat/multilingual-e5-small"
+        )
+
+    def embed(
+        self,
+        text: str,
+    ) -> list[float]:
         """
-        Processes a list of chunks, generates their embeddings, and inserts/updates 
-        them in the Vector Database (ChromaDB). Skips void/deprecated chunks.
+        Tek bir metni E5 passage embedding'ine ├ğevirir.
         """
-        written = 0
-        
-        # tqdm ile for döngüsünü sarıyoruz ki ekranda ilerleme çubuğu çıksın
-        for i, chunk in enumerate(tqdm(chunks, desc="Vektörler Veritabanına Yazılıyor", unit="chunk")):
-            # Skip clauses marked as "Void" to save DB space and prevent retrieving obsolete info
+
+        formatted_text = (
+            f"passage: {text}"
+        )
+
+        return self.model.encode(
+            formatted_text
+        ).tolist()
+
+    def _build_chunk_id(
+        self,
+        chunk: Chunk,
+    ) -> str:
+        """
+        Ayn─▒ chunk i├ğin her ├ğal─▒┼şt─▒rmada ayn─▒ ID ├╝retir.
+        """
+
+        identity = "|".join(
+            [
+                chunk.doc_org or "",
+                chunk.doc_code or "",
+                chunk.version or "",
+                chunk.clause or "",
+                chunk.text or "",
+            ]
+        )
+
+        digest = hashlib.sha256(
+            identity.encode("utf-8")
+        ).hexdigest()
+
+        return f"chunk_{digest}"
+
+    def upsert_chunks(
+        self,
+        chunks: list[Chunk],
+    ) -> int:
+        """
+        Chunk'lar─▒ batch olarak embed eder ve ChromaDB'ye yazar.
+
+        VOID ve bo┼ş chunk'lar indexlenmez.
+        """
+
+        valid_chunks: list[Chunk] = []
+
+        for chunk in chunks:
             if chunk.status == DocStatus.VOID:
                 continue
-                
-            # Generate the vector embedding for the text content
-            chunk.embedding = self.embed(chunk.text)
-            
-            # Execute database insertion with exact metadata fields expected by teammate
-            self.collection.upsert(
-                ids=[f"chunk_{i}_{hash(chunk.text)}"],
-                embeddings=[chunk.embedding],
-                documents=[chunk.text],
-                metadatas=[{
-                    "org": chunk.doc_org or "",
-                    "code": chunk.doc_code or "",
-                    "version": chunk.version or "Latest",
-                    "clause": chunk.clause or "",
-                    "status": str(chunk.status.value) if hasattr(chunk.status, "value") else str(chunk.status),
-                    "source_url": chunk.source_url or ""
-                }]
+
+            clean_text = (
+                chunk.text or ""
+            ).strip()
+
+            if not clean_text:
+                continue
+
+            valid_chunks.append(
+                chunk
             )
-            
-            written += 1
+
+        if not valid_chunks:
+            return 0
+
+        print(
+            f"[VECTOR] Ge├ğerli chunk: "
+            f"{len(valid_chunks)}"
+        )
+
+        # ---------------------------------------------
+        # 1. Embeddingleri batch olu┼ştur
+        # ---------------------------------------------
+        formatted_texts = [
+            f"passage: {chunk.text.strip()}"
+            for chunk in valid_chunks
+        ]
+
+        embeddings = self.model.encode(
+            formatted_texts,
+            batch_size=EMBEDDING_BATCH_SIZE,
+            show_progress_bar=True,
+        ).tolist()
+
+        # ---------------------------------------------
+        # 2. Chroma batch upsert
+        # ---------------------------------------------
+        written = 0
+
+        for start in tqdm(
+            range(
+                0,
+                len(valid_chunks),
+                UPSERT_BATCH_SIZE,
+            ),
+            desc="Chroma batch upsert",
+            unit="batch",
+        ):
+            end = (
+                start + UPSERT_BATCH_SIZE
+            )
+
+            batch_chunks = valid_chunks[
+                start:end
+            ]
+
+            batch_embeddings = embeddings[
+                start:end
+            ]
+
+            ids = []
+            documents = []
+            metadatas = []
+
+            for chunk in batch_chunks:
+                clean_text = (
+                    chunk.text or ""
+                ).strip()
+
+                ids.append(
+                    self._build_chunk_id(
+                        chunk
+                    )
+                )
+
+                documents.append(
+                    clean_text
+                )
+
+                status = (
+                    chunk.status.value
+                    if hasattr(
+                        chunk.status,
+                        "value",
+                    )
+                    else str(chunk.status)
+                )
+
+                metadatas.append(
+                    {
+                        "org": (
+                            chunk.doc_org
+                            or ""
+                        ),
+                        "code": (
+                            chunk.doc_code
+                            or ""
+                        ),
+                        "version": (
+                            chunk.version
+                            or "Latest"
+                        ),
+                        "clause": (
+                            chunk.clause
+                            or ""
+                        ),
+                        "clause_title": (
+                            chunk.clause_title
+                            or ""
+                        ),
+                        "status": status,
+                        "source_url": (
+                            chunk.source_url
+                            or ""
+                        ),
+                    }
+                )
+
+            self.collection.upsert(
+                ids=ids,
+                embeddings=batch_embeddings,
+                documents=documents,
+                metadatas=metadatas,
+            )
+
+            written += len(
+                batch_chunks
+            )
+
         return written
