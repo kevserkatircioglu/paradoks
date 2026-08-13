@@ -1,28 +1,36 @@
-﻿"""
-Usage:
+"""
+Paradoks recursive crawler + Vector DB builder.
 
-python main.py \
-    --seed data/seeds/23041-k00.docx \
-    --output-db backend/vector_db_v2
-
-Full rebuild i├ğin:
+Yeni rebuild:
 
 python main.py \
     --seed data/seeds/23041-k00.docx \
     --output-db backend/vector_db_v2 \
     --reset
+
+Mevcut DB üzerinden devam:
+
+python main.py \
+    --seed data/seeds/23041-k00.docx \
+    --output-db backend/vector_db_v2 \
+    --resume
 """
 
 import argparse
-import os
 import re
 import shutil
 import sys
 from pathlib import Path
 
 
-BASE_DIR = Path(__file__).resolve().parent
-SRC_DIR = BASE_DIR / "src"
+BASE_DIR = Path(
+    __file__
+).resolve().parent
+
+SRC_DIR = (
+    BASE_DIR
+    / "src"
+)
 
 sys.path.insert(
     0,
@@ -42,7 +50,7 @@ def read_local_docx(
     file_path: str | Path,
 ) -> str:
     """
-    Local DOCX dosyas─▒ndaki paragraph metinlerini okur.
+    Local DOCX dosyasındaki paragraph metinlerini okur.
     """
 
     import docx
@@ -53,7 +61,8 @@ def read_local_docx(
 
     return "\n".join(
         paragraph.text
-        for paragraph in doc.paragraphs
+        for paragraph
+        in doc.paragraphs
     )
 
 
@@ -61,7 +70,7 @@ def extract_references_text(
     full_text: str,
 ) -> str:
     """
-    3GPP seed dok├╝man─▒ndaki References b├Âl├╝m├╝n├╝ ay─▒r─▒r.
+    3GPP seed dokümanındaki References bölümünü ayırır.
     """
 
     match = re.search(
@@ -72,17 +81,23 @@ def extract_references_text(
     if not match:
         return full_text
 
-    start_idx = match.start()
+    start_idx = (
+        match.start()
+    )
 
-    end_idx = full_text.find(
-        "1.2\tAbbreviations",
-        start_idx,
+    end_idx = (
+        full_text.find(
+            "1.2\tAbbreviations",
+            start_idx,
+        )
     )
 
     if end_idx == -1:
-        end_idx = full_text.find(
-            "1.2 Abbreviations",
-            start_idx,
+        end_idx = (
+            full_text.find(
+                "1.2 Abbreviations",
+                start_idx,
+            )
         )
 
     if end_idx == -1:
@@ -91,7 +106,8 @@ def extract_references_text(
         ]
 
     return full_text[
-        start_idx:end_idx
+        start_idx:
+        end_idx
     ]
 
 
@@ -113,7 +129,7 @@ def main():
         "--output-db",
         default="backend/vector_db_v2",
         help=(
-            "Yeni Chroma DB yolu. "
+            "Chroma DB yolu. "
             "Default: backend/vector_db_v2"
         ),
     )
@@ -122,12 +138,31 @@ def main():
         "--reset",
         action="store_true",
         help=(
-            "Output DB varsa rebuild ├Âncesi "
-            "tamamen sil."
+            "Output DB varsa çalıştırma "
+            "öncesinde tamamen sil."
+        ),
+    )
+
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Var olan DB'yi koru ve eksik "
+            "deterministic chunk ID'lerden devam et."
         ),
     )
 
     args = parser.parse_args()
+
+    if (
+        args.reset
+        and args.resume
+    ):
+        print(
+            "ERROR: --reset ve --resume "
+            "aynı anda kullanılamaz."
+        )
+        sys.exit(1)
 
     # -----------------------------------------------------
     # PATHLER
@@ -138,7 +173,8 @@ def main():
 
     if not seed_path.is_absolute():
         seed_path = (
-            BASE_DIR / seed_path
+            BASE_DIR
+            / seed_path
         )
 
     output_db = Path(
@@ -147,16 +183,17 @@ def main():
 
     if not output_db.is_absolute():
         output_db = (
-            BASE_DIR / output_db
+            BASE_DIR
+            / output_db
         )
 
     # -----------------------------------------------------
-    # SEED KONTROL├£
+    # SEED
     # -----------------------------------------------------
     if not seed_path.exists():
         print(
-            f"ERROR: Seed bulunamad─▒: "
-            f"{seed_path}"
+            "ERROR: Seed bulunamadı:",
+            seed_path,
         )
         sys.exit(1)
 
@@ -170,23 +207,38 @@ def main():
     )
 
     print(
-        "Yeni DB:",
+        "Vector DB:",
         output_db.resolve(),
     )
 
     # -----------------------------------------------------
-    # DB G├£VENL─░─Ş─░
+    # DB MODE
     # -----------------------------------------------------
     if output_db.exists():
+
         if args.reset:
             print()
             print(
-                "[DB] Eski test/rebuild DB "
-                "siliniyor..."
+                "[DB] Mevcut DB siliniyor..."
             )
 
             shutil.rmtree(
                 output_db
+            )
+
+        elif args.resume:
+            print()
+            print(
+                "[DB] RESUME MODE"
+            )
+
+            print(
+                "[DB] Mevcut DB korunacak."
+            )
+
+            print(
+                "[DB] Zaten indexlenmiş deterministic "
+                "chunk ID'leri yeniden embed edilmeyecek."
             )
 
         else:
@@ -196,11 +248,25 @@ def main():
             )
 
             print(
-                "S─▒f─▒rdan olu┼şturmak i├ğin "
-                "--reset kullan."
+                "Sıfırdan rebuild için --reset,"
+            )
+
+            print(
+                "mevcut DB'den devam için --resume kullan."
             )
 
             sys.exit(1)
+
+    else:
+        if args.resume:
+            print()
+            print(
+                "[DB] Resume istendi ancak DB yok."
+            )
+
+            print(
+                "[DB] Yeni DB oluşturularak devam edilecek."
+            )
 
     # -----------------------------------------------------
     # 1. SEED
@@ -210,15 +276,17 @@ def main():
         "1. Seed document okunuyor..."
     )
 
-    seed_text = read_local_docx(
-        seed_path
+    seed_text = (
+        read_local_docx(
+            seed_path
+        )
     )
 
     # -----------------------------------------------------
     # 2. REFERENCES
     # -----------------------------------------------------
     print(
-        "2. References b├Âl├╝m├╝ ├ğ─▒kar─▒l─▒yor..."
+        "2. References bölümü çıkarılıyor..."
     )
 
     ref_section_text = (
@@ -241,16 +309,22 @@ def main():
     )
 
     print(
-        f"   Seed reference say─▒s─▒: "
-        f"{len(seed_refs)}"
+        "   Seed reference sayısı:",
+        len(seed_refs),
     )
 
     # -----------------------------------------------------
-    # 4. RECURSIVE CRAWLER
+    # 4. CRAWLER
     # -----------------------------------------------------
     print()
     print(
-        "4. Recursive crawler ba┼şl─▒yor..."
+        "4. Recursive crawler başlıyor..."
+    )
+
+    print(
+        "NOT: Crawler metinleri önceki çalışmada "
+        "RAM'de tutulduğu için crawler aşaması "
+        "yeniden çalışacaktır."
     )
 
     crawler = Crawler()
@@ -259,30 +333,29 @@ def main():
         seed_refs
     )
 
-    results = crawler.run()
+    results = (
+        crawler.run()
+    )
 
     print()
     print(
-        "Crawler tamamland─▒."
+        "Crawler tamamlandı."
     )
 
     print(
-        "Toplam i┼şlenen reference:",
+        "Toplam işlenen reference:",
         len(results),
     )
 
     print(
-        "Ba┼şar─▒yla indirilen document:",
-        len(crawler.documents),
+        "Başarıyla indirilen document:",
+        len(
+            crawler.documents
+        ),
     )
 
     # -----------------------------------------------------
-    # RESOLVED METADATA MAP
-    #
-    # (org, code)
-    #   Ôåô
-    # version
-    # source_url
+    # METADATA MAP
     # -----------------------------------------------------
     resolved_map = {}
 
@@ -296,39 +369,51 @@ def main():
             reference.code,
         )
 
-        resolved_map[key] = (
-            resolved
-        )
+        resolved_map[
+            key
+        ] = resolved
 
     # -----------------------------------------------------
     # 5. VECTOR STORE
     # -----------------------------------------------------
     print()
     print(
-        "5. Yeni Vector DB olu┼şturuluyor..."
+        "5. Vector DB işleme başlıyor..."
     )
 
     store = VectorStore(
         db_path=output_db,
-        collection_name="telecom_standards",
+        collection_name=(
+            "telecom_standards"
+        ),
     )
 
-    total_chunks_written = 0
+    initial_db_count = (
+        store.collection.count()
+    )
+
+    print(
+        "[DB] Başlangıç chunk sayısı:",
+        initial_db_count,
+    )
+
+    newly_written = 0
 
     total_documents = len(
         crawler.documents
     )
 
-    document_counter = 0
+    zero_chunk_documents = 0
 
     # -----------------------------------------------------
     # 6. CHUNK + EMBED + UPSERT
     # -----------------------------------------------------
-    for key in list(
-        crawler.documents.keys()
+    for document_counter, key in enumerate(
+        list(
+            crawler.documents.keys()
+        ),
+        start=1,
     ):
-        document_counter += 1
-
         org, code = key
 
         print()
@@ -344,18 +429,23 @@ def main():
             f"[DOC] {org} {code}"
         )
 
-        text = crawler.documents.pop(
-            key
+        text = (
+            crawler.documents.pop(
+                key
+            )
         )
 
-        resolved = resolved_map.get(
-            key
+        resolved = (
+            resolved_map.get(
+                key
+            )
         )
 
         version = "Latest"
         source_url = None
 
         if resolved is not None:
+
             if resolved.version:
                 version = (
                     resolved.version
@@ -375,34 +465,50 @@ def main():
         )
 
         print(
-            "[DOC] Olu┼şturulan chunk:",
+            "[DOC] Oluşturulan chunk:",
             len(chunks),
         )
 
-        written = store.upsert_chunks(
-            chunks
+        if not chunks:
+            zero_chunk_documents += 1
+
+        written = (
+            store.upsert_chunks(
+                chunks
+            )
         )
 
-        total_chunks_written += (
+        newly_written += (
             written
         )
 
         print(
-            "[DOC] DB'ye yaz─▒lan:",
+            "[DOC] Yeni yazılan:",
             written,
         )
 
         print(
-            "[TOTAL] ┼Şu ana kadar:",
-            total_chunks_written,
+            "[TOTAL] Bu çalışmada yeni yazılan:",
+            newly_written,
+        )
+
+        print(
+            "[TOTAL] DB toplam:",
+            store.collection.count(),
         )
 
     # -----------------------------------------------------
-    # SONU├ç
+    # FINAL
     # -----------------------------------------------------
+    final_db_count = (
+        store.collection.count()
+    )
+
     print()
     print("=" * 70)
-    print("PIPELINE TAMAMLANDI")
+    print(
+        "PIPELINE TAMAMLANDI"
+    )
     print("=" * 70)
 
     print(
@@ -411,8 +517,23 @@ def main():
     )
 
     print(
-        "Toplam yaz─▒lan chunk:",
-        total_chunks_written,
+        "0 chunk üreten document:",
+        zero_chunk_documents,
+    )
+
+    print(
+        "Başlangıç DB chunk:",
+        initial_db_count,
+    )
+
+    print(
+        "Bu çalışmada yeni yazılan:",
+        newly_written,
+    )
+
+    print(
+        "Final DB chunk:",
+        final_db_count,
     )
 
     print(
