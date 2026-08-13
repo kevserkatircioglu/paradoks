@@ -17,6 +17,7 @@ from models import Chunk, DocStatus
 
 EMBEDDING_BATCH_SIZE = 8
 UPSERT_BATCH_SIZE = 256
+EXISTENCE_CHECK_BATCH_SIZE = 500
 
 
 class VectorStore:
@@ -47,6 +48,11 @@ class VectorStore:
             self.client.get_or_create_collection(
                 collection_name
             )
+        )
+
+        print(
+            "[VECTOR] Mevcut DB chunk sayısı:",
+            self.collection.count(),
         )
 
         print(
@@ -84,8 +90,6 @@ class VectorStore:
         """
         Aynı içerik ve metadata kombinasyonu için
         her çalıştırmada aynı deterministic ID üretir.
-
-        Baştaki/sondaki gereksiz boşluklar normalize edilir.
         """
 
         identity = "|".join(
@@ -114,9 +118,7 @@ class VectorStore:
         )
 
         digest = hashlib.sha256(
-            identity.encode(
-                "utf-8"
-            )
+            identity.encode("utf-8")
         ).hexdigest()
 
         return f"chunk_{digest}"
@@ -126,15 +128,8 @@ class VectorStore:
         chunks: list[Chunk],
     ) -> list[tuple[str, Chunk]]:
         """
-        VOID, boş ve duplicate chunk'ları temizler.
-
-        Dönen yapı:
-            [
-                (chunk_id, chunk),
-                ...
-            ]
-
-        Aynı deterministic ID yalnızca bir kez tutulur.
+        VOID, boş ve aynı deterministic ID'ye sahip
+        duplicate chunk'ları temizler.
         """
 
         unique_chunks: list[
@@ -148,16 +143,10 @@ class VectorStore:
         duplicate_count = 0
 
         for chunk in chunks:
-            # -----------------------------------------
-            # VOID
-            # -----------------------------------------
             if chunk.status == DocStatus.VOID:
                 void_count += 1
                 continue
 
-            # -----------------------------------------
-            # BOŞ METİN
-            # -----------------------------------------
             clean_text = (
                 chunk.text
                 or ""
@@ -167,21 +156,14 @@ class VectorStore:
                 empty_count += 1
                 continue
 
-            # Metni normalize edilmiş haliyle tut.
             chunk.text = clean_text
 
-            # -----------------------------------------
-            # DETERMINISTIC ID
-            # -----------------------------------------
             chunk_id = (
                 self._build_chunk_id(
                     chunk
                 )
             )
 
-            # -----------------------------------------
-            # DUPLICATE
-            # -----------------------------------------
             if chunk_id in seen_ids:
                 duplicate_count += 1
                 continue
@@ -198,50 +180,119 @@ class VectorStore:
             )
 
         print(
-            f"[VECTOR] Gelen chunk: "
-            f"{len(chunks)}"
+            "[VECTOR] Gelen chunk:",
+            len(chunks),
         )
 
         if void_count:
             print(
-                f"[VECTOR] VOID atlandı: "
-                f"{void_count}"
+                "[VECTOR] VOID atlandı:",
+                void_count,
             )
 
         if empty_count:
             print(
-                f"[VECTOR] Boş chunk atlandı: "
-                f"{empty_count}"
+                "[VECTOR] Boş chunk atlandı:",
+                empty_count,
             )
 
         if duplicate_count:
             print(
-                f"[VECTOR] Duplicate atlandı: "
-                f"{duplicate_count}"
+                "[VECTOR] Aynı doküman içi duplicate atlandı:",
+                duplicate_count,
             )
 
         print(
-            f"[VECTOR] Unique geçerli chunk: "
-            f"{len(unique_chunks)}"
+            "[VECTOR] Unique geçerli chunk:",
+            len(unique_chunks),
         )
 
         return unique_chunks
+
+    def _remove_already_indexed_chunks(
+        self,
+        chunks: list[tuple[str, Chunk]],
+    ) -> list[tuple[str, Chunk]]:
+        """
+        Resume sırasında ChromaDB'de zaten bulunan deterministic
+        ID'leri tespit eder.
+
+        Zaten DB'de bulunan chunk'lar yeniden embed edilmez.
+        """
+
+        if not chunks:
+            return []
+
+        all_ids = [
+            chunk_id
+            for chunk_id, _
+            in chunks
+        ]
+
+        existing_ids: set[str] = set()
+
+        for start in range(
+            0,
+            len(all_ids),
+            EXISTENCE_CHECK_BATCH_SIZE,
+        ):
+            batch_ids = all_ids[
+                start:
+                start + EXISTENCE_CHECK_BATCH_SIZE
+            ]
+
+            result = self.collection.get(
+                ids=batch_ids,
+                include=[],
+            )
+
+            existing_ids.update(
+                result.get(
+                    "ids",
+                    [],
+                )
+            )
+
+        missing_chunks = [
+            (
+                chunk_id,
+                chunk,
+            )
+            for chunk_id, chunk
+            in chunks
+            if chunk_id not in existing_ids
+        ]
+
+        if existing_ids:
+            print(
+                "[VECTOR] DB'de zaten vardı, atlandı:",
+                len(existing_ids),
+            )
+
+        print(
+            "[VECTOR] Yeni embed edilecek chunk:",
+            len(missing_chunks),
+        )
+
+        return missing_chunks
 
     def upsert_chunks(
         self,
         chunks: list[Chunk],
     ) -> int:
         """
-        Chunk'ları temizler, deterministic ID'ye göre
-        duplicate kayıtları kaldırır, batch olarak embed eder
-        ve ChromaDB'ye yazar.
+        Chunk'ları:
 
-        VOID, boş ve aynı ID'ye sahip duplicate chunk'lar
-        indexlenmez.
+        1. VOID / boş / duplicate temizler.
+        2. DB'de zaten bulunan deterministic ID'leri atlar.
+        3. Sadece eksik chunk'ları embed eder.
+        4. ChromaDB'ye batch halinde yazar.
+
+        Bu yapı rebuild'in güvenli şekilde resume edilmesini sağlar.
         """
 
         # -------------------------------------------------
-        # 1. VALIDATION + DEDUP
+        # 1. VALIDATION + LOCAL DEDUP
         # -------------------------------------------------
         unique_chunks = (
             self._prepare_unique_chunks(
@@ -253,12 +304,28 @@ class VectorStore:
             return 0
 
         # -------------------------------------------------
-        # 2. EMBEDDINGLERİ BATCH OLUŞTUR
+        # 2. DB'DE ZATEN VAR MI?
+        # -------------------------------------------------
+        chunks_to_write = (
+            self._remove_already_indexed_chunks(
+                unique_chunks
+            )
+        )
+
+        if not chunks_to_write:
+            print(
+                "[VECTOR] Bu dokümanın tüm chunk'ları "
+                "zaten indexlenmiş."
+            )
+            return 0
+
+        # -------------------------------------------------
+        # 3. EMBEDDING
         # -------------------------------------------------
         formatted_texts = [
             f"passage: {chunk.text}"
-            for chunk_id, chunk
-            in unique_chunks
+            for _, chunk
+            in chunks_to_write
         ]
 
         embeddings = self.model.encode(
@@ -268,14 +335,14 @@ class VectorStore:
         ).tolist()
 
         # -------------------------------------------------
-        # 3. CHROMA BATCH UPSERT
+        # 4. CHROMA BATCH UPSERT
         # -------------------------------------------------
         written = 0
 
         for start in tqdm(
             range(
                 0,
-                len(unique_chunks),
+                len(chunks_to_write),
                 UPSERT_BATCH_SIZE,
             ),
             desc="Chroma batch upsert",
@@ -287,7 +354,7 @@ class VectorStore:
             )
 
             batch_items = (
-                unique_chunks[
+                chunks_to_write[
                     start:end
                 ]
             )
@@ -306,17 +373,12 @@ class VectorStore:
                 chunk_id,
                 chunk,
             ) in batch_items:
-                clean_text = (
-                    chunk.text
-                    or ""
-                ).strip()
-
                 ids.append(
                     chunk_id
                 )
 
                 documents.append(
-                    clean_text
+                    chunk.text
                 )
 
                 status = (
@@ -360,9 +422,6 @@ class VectorStore:
                     }
                 )
 
-            # Ek güvenlik:
-            # Bu noktada batch içinde duplicate ID
-            # bulunmaması gerekir.
             if len(ids) != len(set(ids)):
                 raise RuntimeError(
                     "Chroma upsert öncesi batch içinde "
