@@ -19,7 +19,6 @@ from typing import Optional
 
 from models import Reference
 
-# Regex patterns to identify and extract the document code for each organization[cite: 2]
 PATTERNS: dict[str, re.Pattern] = {
     "3GPP":  re.compile(r"3GPP\s+(TS|TR)\s*(\d{2}\.\d{3})(?:\s+Version\s+[\d.]+)?", re.IGNORECASE),
     "ETSI":  re.compile(r"ETSI\s+(TS|EN|TR)\s*(\d{3}\s?\d{3})", re.IGNORECASE),
@@ -27,6 +26,10 @@ PATTERNS: dict[str, re.Pattern] = {
     "ITU-T": re.compile(r"ITU-T\s+Rec(?:ommendation)?\.?\s*([A-Z]\.\d+)", re.IGNORECASE),
     "ATIS":  re.compile(r"ATIS-(\d{7}(?:\.v\d{3})?)", re.IGNORECASE),
     "GSMA":  re.compile(r"\bGSMA\s+([A-Z]{2}\.\d{1,3})\b"),
+    "IEEE":  re.compile(r"IEEE\s+(\d{2,4}(?:\.\d+[a-z]?)?)", re.IGNORECASE),
+    "O-RAN": re.compile(r"O-RAN\.[A-Z0-9\-]+", re.IGNORECASE),
+    "BBF":   re.compile(r"(?:BBF|TR)-\d{3}", re.IGNORECASE),
+    "MEF":   re.compile(r"MEF\s+(\d{1,3})", re.IGNORECASE),
 }
 
 # Regex to capture the reference number (e.g., "[2]") and the rest of the line[cite: 2]

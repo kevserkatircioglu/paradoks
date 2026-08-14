@@ -138,21 +138,47 @@ def _resolve_itu(ref: Reference) -> ResolvedSource:
     return ResolvedSource(reference=ref, status=DocStatus.BLOCKED, source_url=landing_url)
 
 
-# --- GSMA / ATIS: Google Araması Yerine Deterministik Yapı ----------
+def _search_google_pdf(query: str) -> str | None:
+    if not API_KEY or not CX:
+        return None
+    url = f"https://www.googleapis.com/customsearch/v1?q={query}&key={API_KEY}&cx={CX}"
+    resp = _get(url)
+    if resp:
+        try:
+            data = resp.json()
+            for item in data.get("items", []):
+                link = item.get("link", "")
+                if link.lower().endswith(".pdf"):
+                    return link
+        except Exception:
+            pass
+    return None
 
 def _resolve_gsma(ref: Reference) -> ResolvedSource:
-    code_clean = ref.code.strip()
-    url = f"https://www.gsma.com/newsroom/all-documents/?search={code_clean}"
-    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=url)
-
+    pdf_link = _search_google_pdf(f"site:gsma.com {ref.code.strip()} filetype:pdf")
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING if pdf_link else DocStatus.BLOCKED, source_url=pdf_link)
 
 def _resolve_atis(ref: Reference) -> ResolvedSource:
     code_clean = ref.code.replace("ATIS-", "").replace("-", "").strip()
-    url = f"https://webstore.ansi.org/Standards/ATIS/atis{code_clean}"
-    return ResolvedSource(reference=ref, status=DocStatus.PENDING, source_url=url)
+    pdf_link = _search_google_pdf(f"site:atis.org {code_clean} filetype:pdf")
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING if pdf_link else DocStatus.BLOCKED, source_url=pdf_link)
 
+def _resolve_ieee(ref: Reference) -> ResolvedSource:
+    pdf_link = _search_google_pdf(f"site:ieee.org {ref.code.strip()} filetype:pdf")
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING if pdf_link else DocStatus.BLOCKED, source_url=pdf_link)
 
-# Tüm kurumların işleyicilerini (handler) eşleştiriyoruz
+def _resolve_oran(ref: Reference) -> ResolvedSource:
+    pdf_link = _search_google_pdf(f"site:o-ran.org {ref.code.strip()} filetype:pdf")
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING if pdf_link else DocStatus.BLOCKED, source_url=pdf_link)
+
+def _resolve_bbf(ref: Reference) -> ResolvedSource:
+    pdf_link = _search_google_pdf(f"site:broadband-forum.org {ref.code.strip()} filetype:pdf")
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING if pdf_link else DocStatus.BLOCKED, source_url=pdf_link)
+
+def _resolve_mef(ref: Reference) -> ResolvedSource:
+    pdf_link = _search_google_pdf(f"site:mef.net {ref.code.strip()} filetype:pdf")
+    return ResolvedSource(reference=ref, status=DocStatus.PENDING if pdf_link else DocStatus.BLOCKED, source_url=pdf_link)
+
 RESOLVERS = {
     "3GPP": _resolve_3gpp,
     "IETF": _resolve_ietf,
@@ -160,6 +186,10 @@ RESOLVERS = {
     "ITU-T": _resolve_itu,
     "GSMA": _resolve_gsma,
     "ATIS": _resolve_atis,
+    "IEEE": _resolve_ieee,
+    "O-RAN": _resolve_oran,
+    "BBF": _resolve_bbf,
+    "MEF": _resolve_mef,
 }
 
 def resolve(ref: Reference) -> ResolvedSource:
