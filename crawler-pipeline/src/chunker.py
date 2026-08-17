@@ -7,6 +7,20 @@ organizasyona göre farklı heading kontrolleri uygulanır.
 IETF RFC dokümanlarında section başlıkları farklı biçimlerde
 bulunabildiği için Table of Contents tabanlı doğrulama uygulanır.
 
+3GPP dokümanlarında hem normal sayısal clause yapıları hem de
+Annex clause yapıları desteklenir.
+
+Desteklenen 3GPP örnekleri:
+
+0 Scope
+0.1 Normative references
+1 Scope
+9.1.3.4.2 Warning Message Delivery Procedure
+
+Annex A (normative): Description
+A.1 Individual Teleservices
+A.1.3.4 Short message service description
+
 Desteklenen IETF örnekleri:
 
 1 Introduction
@@ -38,13 +52,7 @@ CHUNK_OVERLAP_CHARS = 300
 
 
 # =========================================================
-# 3GPP / GENERIC CLAUSE
-# =========================================================
-#
-# Örnek:
-#
-# 9.1.3.4.2 Warning Message Delivery Procedure
-# 9.2.15 Void
+# 3GPP / GENERIC NUMERIC CLAUSE
 # =========================================================
 
 GENERIC_CLAUSE_HEADING = re.compile(
@@ -53,28 +61,53 @@ GENERIC_CLAUSE_HEADING = re.compile(
 
 
 # =========================================================
-# IETF / RFC TEK SATIR HEADING
+# 3GPP ANNEX ANA BAŞLIK
 # =========================================================
 #
-# Desteklenen örnekler:
+# Örnek:
 #
-# 1 Introduction
-# 13.2.1 Creating the Initial INVITE
+# Annex A (normative): Description of individual Teleservices
+# Annex B (informative)
+# Annex C: Examples
+# =========================================================
+
+GPP_ANNEX_HEADING = re.compile(
+    r"^\s*"
+    r"Annex[ \t]+"
+    r"([A-Z])"
+    r"(?:[ \t]*\([^)]*\))?"
+    r"[ \t]*:?"
+    r"[ \t]*(.*)"
+    r"$",
+    re.IGNORECASE,
+)
+
+
+# =========================================================
+# 3GPP ANNEX CLAUSE
+# =========================================================
 #
-# veya:
+# Örnek:
 #
-# 1. Introduction
-# 13.2.1. Creating the Initial INVITE
+# A.1 Individual Teleservices
+# A.1.3.3 Cell Broadcast Service
+# B.2.1 Example
 #
-# İlk section numarası 1-99 ile sınırlandırılır.
-#
-# Böylece:
-#
-# 200 OK
-# 488 Not Acceptable Here
-# 5061 ...
-#
-# gibi değerlerin section sanılması azaltılır.
+# Baştaki küçük extraction girintileri kabul edilir.
+# =========================================================
+
+GPP_ANNEX_CLAUSE_HEADING = re.compile(
+    r"^\s*"
+    r"([A-Z](?:\.\d+)+)"
+    r"[ \t]+"
+    r"(.+)"
+    r"$",
+    re.IGNORECASE,
+)
+
+
+# =========================================================
+# IETF / RFC TEK SATIR HEADING
 # =========================================================
 
 IETF_SECTION_HEADING = re.compile(
@@ -84,19 +117,6 @@ IETF_SECTION_HEADING = re.compile(
 
 # =========================================================
 # IETF / RFC SADECE SECTION NUMARASI
-# =========================================================
-#
-# Text extraction bazı RFC'lerde:
-#
-# 1
-# Introduction
-#
-# bazı RFC'lerde:
-#
-# 1
-# .  Introduction
-#
-# üretmektedir.
 # =========================================================
 
 IETF_SECTION_NUMBER = re.compile(
@@ -125,7 +145,7 @@ RFC_TOC_SINGLE_LINE = re.compile(
 
 
 # =========================================================
-# RFC TOC - SATIR KONTROLÜ
+# RFC TOC SATIR KONTROLÜ
 # =========================================================
 
 RFC_TOC_LINE = re.compile(
@@ -154,15 +174,25 @@ RFC_PAGE_NUMBER = re.compile(
 # 3GPP TABLE OF CONTENTS
 # =========================================================
 #
-# Örnek:
+# Desteklenen örnekler:
 #
-# 9.1.3.4.2    Warning Message Delivery Procedure    27
-#
-# Son sayı sayfa numarasıdır.
+# 9.1.3.4.2 Warning Message Delivery Procedure 27
+# A.1.3.4 Short message service description 14
 # =========================================================
 
 GPP_TOC_LINE = re.compile(
-    r"^\s*\d+(?:\.\d+)*[ \t]+.+[ \t]+\d+\s*$"
+    r"^\s*"
+    r"(?:"
+        r"\d+(?:\.\d+)*"
+        r"|"
+        r"[A-Z](?:\.\d+)*"
+    r")"
+    r"[ \t]+"
+    r".+"
+    r"[ \t]+"
+    r"\d+"
+    r"\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -264,6 +294,209 @@ def _looks_like_rfc_toc_title(
 
 
 # =========================================================
+# 3GPP HEADING YARDIMCISI
+# =========================================================
+
+def _match_3gpp_heading(
+    line: str,
+    in_annex: bool,
+) -> tuple[str, str] | None:
+    """
+    3GPP gerçek clause heading'ini bulur.
+
+    Desteklenen yapılar:
+
+        0 Scope
+        1 Scope
+        9.1.3.4.2 Warning ...
+
+        Annex A (normative): ...
+        A.1 ...
+        A.1.3.4 ...
+
+    Annex başladıktan sonra:
+
+        1 Introduction
+        2 Definition ...
+        3 Reply path
+
+    gibi Annex içi yerel numaralandırmalar ana clause
+    olarak kabul edilmez.
+    """
+
+    if not line:
+        return None
+
+    stripped = (
+        line.strip()
+    )
+
+    if not stripped:
+        return None
+
+    # -------------------------------------------------
+    # TOC SATIRINI REDDET
+    # -------------------------------------------------
+
+    if GPP_TOC_LINE.fullmatch(
+        stripped
+    ):
+        return None
+
+    # -------------------------------------------------
+    # ANNEX ANA BAŞLIĞI
+    # -------------------------------------------------
+
+    annex_match = (
+        GPP_ANNEX_HEADING.fullmatch(
+            stripped
+        )
+    )
+
+    if annex_match:
+
+        annex_letter = (
+            annex_match
+            .group(1)
+            .upper()
+        )
+
+        annex_title = (
+            annex_match
+            .group(2)
+            .strip()
+        )
+
+        if annex_title:
+
+            title = (
+                f"Annex {annex_letter}: "
+                f"{annex_title}"
+            )
+
+        else:
+
+            title = (
+                f"Annex {annex_letter}"
+            )
+
+        return (
+            annex_letter,
+            title,
+        )
+
+    # -------------------------------------------------
+    # ANNEX CLAUSE
+    #
+    # Baştaki whitespace bilinçli olarak kabul edilir.
+    # -------------------------------------------------
+
+    annex_clause_match = (
+        GPP_ANNEX_CLAUSE_HEADING.fullmatch(
+            line
+        )
+    )
+
+    if annex_clause_match:
+
+        clause_number = (
+            annex_clause_match
+            .group(1)
+            .upper()
+        )
+
+        clause_title = (
+            annex_clause_match
+            .group(2)
+            .strip()
+        )
+
+        return (
+            clause_number,
+            clause_title,
+        )
+
+    # -------------------------------------------------
+    # NORMAL SAYISAL CLAUSE
+    #
+    # Normal numeric clause için girintili satırları
+    # heading kabul etmiyoruz.
+    # -------------------------------------------------
+
+    candidate = (
+        line.rstrip()
+    )
+
+    if (
+        candidate
+        != candidate.lstrip()
+    ):
+        return None
+
+    numeric_match = (
+        GENERIC_CLAUSE_HEADING.fullmatch(
+            candidate
+        )
+    )
+
+    if not numeric_match:
+        return None
+
+    clause_number = (
+        numeric_match
+        .group(1)
+    )
+
+    clause_title = (
+        numeric_match
+        .group(2)
+        .strip()
+    )
+
+    # -------------------------------------------------
+    # ANNEX İÇİNDEKİ YEREL NUMARALANDIRMALARI REDDET
+    #
+    # Örnek:
+    #
+    # A.1.3.4 Short message service description
+    #
+    # 1 Introduction
+    # 2 Definition ...
+    # 3 Reply path
+    #
+    # Bu 1/2/3 yeni doküman clause'ları değildir.
+    # -------------------------------------------------
+
+    if in_annex:
+        return None
+
+    # -------------------------------------------------
+    # ADRES GÜRÜLTÜSÜ
+    #
+    # 650 Route des Lucioles ...
+    # -------------------------------------------------
+
+    if "." not in clause_number:
+
+        try:
+
+            if int(
+                clause_number
+            ) > 99:
+
+                return None
+
+        except ValueError:
+
+            return None
+
+    return (
+        clause_number,
+        clause_title,
+    )
+
+
+# =========================================================
 # IETF TABLE OF CONTENTS
 # =========================================================
 
@@ -288,6 +521,7 @@ def _find_ietf_toc_start(
             "table of contents",
             "contents",
         ):
+
             return index
 
     return None
@@ -308,8 +542,10 @@ def _extract_ietf_toc(
     haritasını çıkarır.
     """
 
-    toc_start = _find_ietf_toc_start(
-        lines
+    toc_start = (
+        _find_ietf_toc_start(
+            lines
+        )
     )
 
     if toc_start is None:
@@ -447,6 +683,7 @@ def _extract_ietf_toc(
                         title_lines
                         and j + 1 < max_title_end
                     ):
+
                         j += 1
                         continue
 
@@ -497,6 +734,7 @@ def _extract_ietf_toc(
                     )
                     and title_lines
                 ):
+
                     break
 
                 title_lines.append(
@@ -519,6 +757,7 @@ def _extract_ietf_toc(
                 i - last_match_index
             ) > 150
         ):
+
             break
 
         i += 1
@@ -561,7 +800,7 @@ def _match_ietf_heading_against_toc(
         return None
 
     # -------------------------------------------------
-    # TEK SATIR
+    # TEK SATIR HEADING
     # -------------------------------------------------
 
     same_line_match = (
@@ -606,7 +845,7 @@ def _match_ietf_heading_against_toc(
             )
 
     # -------------------------------------------------
-    # İKİ SATIR
+    # İKİ SATIR HEADING
     # -------------------------------------------------
 
     number_match = (
@@ -708,6 +947,7 @@ def _find_ietf_content_start(
         )
 
         if heading is None:
+
             continue
 
         section_number = (
@@ -927,7 +1167,7 @@ def _split_ietf_clauses(
 
 
 # =========================================================
-# HEADING MATCH
+# GENERIC / IETF FALLBACK HEADING MATCH
 # =========================================================
 
 def _match_heading(
@@ -935,8 +1175,10 @@ def _match_heading(
     doc_org: str,
 ):
     """
-    Organizasyona uygun section/clause heading
-    eşleşmesini döndürür.
+    Generic ve IETF fallback heading eşleşmesi.
+
+    3GPP normal parsing için artık
+    _match_3gpp_heading kullanılmaktadır.
     """
 
     candidate = (
@@ -976,51 +1218,6 @@ def _match_heading(
                 candidate
             )
         )
-
-    # -------------------------------------------------
-    # 3GPP
-    # -------------------------------------------------
-
-    if org == "3GPP":
-
-        if GPP_TOC_LINE.match(
-            candidate
-        ):
-
-            return None
-
-        match = (
-            GENERIC_CLAUSE_HEADING.match(
-                candidate
-            )
-        )
-
-        if not match:
-
-            return None
-
-        clause_number = (
-            match.group(1)
-        )
-
-        if "." not in clause_number:
-
-            try:
-
-                if (
-                    int(
-                        clause_number
-                    )
-                    > 99
-                ):
-
-                    return None
-
-            except ValueError:
-
-                return None
-
-        return match
 
     # -------------------------------------------------
     # GENERIC
@@ -1076,10 +1273,6 @@ def split_into_clauses(
             )
         )
 
-    # -------------------------------------------------
-    # 3GPP / GENERIC
-    # -------------------------------------------------
-
     lines = (
         document_text.splitlines()
     )
@@ -1094,92 +1287,142 @@ def split_into_clauses(
 
     current = None
 
-    # -------------------------------------------------
-    # 3GPP İÇERİK BAŞLANGICI
-    #
-    # Bazı 3GPP dokümanları:
-    #
-    # 0 Scope
-    # 0.1 Normative references
-    # 0.2 Abbreviations
-    # 1 ...
-    #
-    # biçimini kullanır.
-    #
-    # Bazıları ise:
-    #
-    # 1 Scope
-    # 2 References
-    # ...
-    #
-    # biçimini kullanır.
-    #
-    # Bu nedenle artık hem "0 Scope" hem "1 Scope"
-    # gerçek içerik başlangıcı olarak kabul edilir.
-    # -------------------------------------------------
+    # =================================================
+    # 3GPP ÖZEL PARSER
+    # =================================================
 
-    gpp_content_started = (
-        org != "3GPP"
-    )
+    if org == "3GPP":
 
-    for line in lines:
+        # Bazı 3GPP dokümanları:
+        #
+        # 0 Scope
+        #
+        # bazıları:
+        #
+        # 1 Scope
+        #
+        # ile başlar.
 
-        # -------------------------------------------------
-        # 3GPP GERÇEK İÇERİK BAŞLANGICI
-        # -------------------------------------------------
+        gpp_content_started = False
 
-        if (
-            org == "3GPP"
-            and not gpp_content_started
-        ):
+        # Annex başladıktan sonra çıplak numeric
+        # yerel numaralandırmaları yeni ana clause
+        # kabul etmiyoruz.
+        in_annex = False
 
-            scope_match = (
-                GENERIC_CLAUSE_HEADING.match(
-                    line.strip()
+        for line in lines:
+
+            # -----------------------------------------
+            # GERÇEK İÇERİK BAŞLANGICI
+            # -----------------------------------------
+
+            if not gpp_content_started:
+
+                scope_match = (
+                    GENERIC_CLAUSE_HEADING.fullmatch(
+                        line.strip()
+                    )
+                )
+
+                if (
+                    scope_match
+                    and (
+                        scope_match.group(1)
+                        in {
+                            "0",
+                            "1",
+                        }
+                    )
+                    and (
+                        scope_match
+                        .group(2)
+                        .strip()
+                        .casefold()
+                        == "scope"
+                    )
+                ):
+
+                    gpp_content_started = True
+
+                else:
+
+                    continue
+
+            # -----------------------------------------
+            # HEADING EŞLEŞMESİ
+            # -----------------------------------------
+
+            heading = (
+                _match_3gpp_heading(
+                    line=line,
+                    in_annex=in_annex,
                 )
             )
 
-            if (
-                scope_match
-                and (
-                    scope_match.group(1)
-                    in {
-                        "0",
-                        "1",
-                    }
+            if heading is not None:
+
+                (
+                    clause_number,
+                    clause_title,
+                ) = heading
+
+                # Annex ana başlığı veya Annex clause
+                # görülürse Annex moduna gir.
+                if (
+                    re.fullmatch(
+                        r"[A-Z](?:\.\d+)*",
+                        clause_number,
+                        re.IGNORECASE,
+                    )
+                    and not clause_number.isdigit()
+                ):
+
+                    in_annex = True
+
+                if current:
+
+                    clauses.append(
+                        current
+                    )
+
+                current = (
+                    clause_number,
+                    clause_title,
+                    [],
                 )
-                and (
-                    scope_match
-                    .group(2)
-                    .strip()
-                    .casefold()
-                    == "scope"
-                )
-            ):
 
-                gpp_content_started = (
-                    True
+            elif current:
+
+                current[2].append(
+                    line
                 )
 
-            else:
+        if current:
 
-                continue
+            clauses.append(
+                current
+            )
 
-        # -------------------------------------------------
-        # 3GPP TOC TEMİZLİĞİ
-        # -------------------------------------------------
+        return [
+            (
+                clause_no,
+                clause_title,
+                "\n".join(
+                    body
+                ).strip(),
+            )
+            for (
+                clause_no,
+                clause_title,
+                body,
+            ) in clauses
+        ]
 
-        if org == "3GPP":
+    # =================================================
+    # GENERIC PARSER
+    # =================================================
 
-            if GPP_TOC_LINE.match(
-                line.strip()
-            ):
-
-                continue
-
-        # -------------------------------------------------
-        # HEADING EŞLEŞMESİ
-        # -------------------------------------------------
+    for line in lines:
 
         match = (
             _match_heading(
@@ -1413,8 +1656,7 @@ def _split_long_text(
 
         next_start = max(
             0,
-            end
-            - overlap_chars,
+            end - overlap_chars,
         )
 
         if next_start > 0:
