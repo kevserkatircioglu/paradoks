@@ -1,20 +1,4 @@
-"""
-Queue + visited-set recursive crawler.
 
-Bu sürüm disk cache desteğine sahiptir.
-
-Amaç:
-- İndirilen doküman metinlerini RAM dışında diskte de saklamak.
-- Aynı dokümanı sonraki çalıştırmalarda tekrar indirmemek.
-- Daha önce bulunan alt referansları tekrar parse etmemek.
-- Uzun crawler işlemlerinde restart maliyetini ciddi biçimde azaltmak.
-
-Cache varsayılan olarak:
-
-crawler-pipeline/data/crawler_cache/
-
-altında tutulur.
-"""
 
 from __future__ import annotations
 
@@ -35,7 +19,48 @@ from reference_parser import (
 from resolver import resolve
 from fetcher import fetch_and_read
 
+import re
 
+def detect_3gpp_document_id(text: str) -> tuple[str, str] | None:
+    """Metnin ilk 80 satırına bakarak standardın gerçek kimliğini tespit eder."""
+    head = "\n".join((text or "").splitlines()[:80])
+    match = re.search(
+        r"\b3GPP\s+(TS|TR)\s+(\d{2}\.\d{3})\b",
+        head,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    doc_type = match.group(1).upper()
+    number = match.group(2)
+    return ("3GPP", f"{doc_type} {number}")
+
+def validate_3gpp_document(requested_code: str, text: str) -> bool:
+    """İstenen standart ile indirilen belgenin eşleşip eşleşmediğini doğrular."""
+    detected = detect_3gpp_document_id(text)
+    if detected is None:
+        return False
+
+    detected_code = detected[1].upper().strip()
+    requested = requested_code.upper().strip()
+    return detected_code == requested
+
+
+def looks_like_3gpp_meeting_contribution(text: str) -> bool:
+    """Metnin bir 3GPP toplantı katkısı (meeting contribution) olup olmadığını kontrol eder."""
+    head = "\n".join((text or "").splitlines()[:50]).casefold()
+    markers = [
+        "3gpp tsg-",
+        "meeting #",
+        "sp-",
+        "rp-",
+        "cp-",
+        "gp-",
+    ]
+    matches = sum(marker in head for marker in markers)
+    return matches >= 2
+    
 class Crawler:
     def __init__(
         self,
@@ -640,10 +665,11 @@ class Crawler:
                 continue
 
             # -------------------------------------------------
-            # FETCH
+            # FETCH & VALIDATE
             # -------------------------------------------------
             text = fetch_and_read(
-                resolved.source_url
+                url=resolved.source_url,
+                requested_code=ref.code
             )
 
             if not text:
@@ -653,9 +679,53 @@ class Crawler:
                     text=None,
                     discovered_refs=[],
                 )
-
                 continue
 
+            # Eğer 3GPP belgesi ise, içerik doğrulaması yap
+            if ref.org.upper() == "3GPP":
+                
+                # EK KORUMA (Madde 8): Toplantı notu (Meeting Contribution) kontrolü
+                if looks_like_3gpp_meeting_contribution(text):
+                    print(f"[REDDEDİLDİ] {ref.code} - Bu bir toplantı notu (Meeting Contribution), standart değil!")
+                    self._save_cache(
+                        ref=ref,
+                        resolved=resolved,
+                        text=None,
+                        discovered_refs=[],
+                    )
+                    continue
+
+                # ANA KORUMA (Madde 5, 6, 7): Doğru standart mı kontrolü
+                if not validate_3gpp_document(ref.code, text):
+                    detected_id = detect_3gpp_document_id(text)
+                    print(
+                        f"[REDDEDİLDİ] İstenen: {ref.code}, "
+                        f"Bulunan: {detected_id}. Yanlış belge atlanıyor."
+                    )
+                    self._save_cache(
+                        ref=ref,
+                        resolved=resolved,
+                        text=None,
+                        discovered_refs=[],
+                    )
+                    continue
+
+            # Eğer 3GPP belgesi ise, içerik doğrulaması yap
+            if ref.org.upper() == "3GPP":
+                if not validate_3gpp_document(ref.code, text):
+                    detected_id = detect_3gpp_document_id(text)
+                    print(
+                        f"[REDDEDİLDİ] İstenen: {ref.code}, "
+                        f"Bulunan: {detected_id}. Yanlış belge atlanıyor."
+                    )
+                    # Yanlış belgeyi başarılıymış gibi kaydetme
+                    self._save_cache(
+                        ref=ref,
+                        resolved=resolved,
+                        text=None,
+                        discovered_refs=[],
+                    )
+                    continue
             # -------------------------------------------------
             # STORE IN RAM
             # -------------------------------------------------

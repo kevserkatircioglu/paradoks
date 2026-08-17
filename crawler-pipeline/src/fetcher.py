@@ -1,15 +1,8 @@
-"""
-Fetches a document from a URL and extracts its text content.
-
-Does NOT persist files to disk long-term -- downloads into memory
-(or a temp file, cleaned up after), extracts text, returns the string.
-
-Supports PDF, DOCX, ZIP and plain HTML pages.
-"""
-
 import io
 import re
 import zipfile
+import docx
+from pathlib import PurePosixPath
 
 import requests
 from bs4 import BeautifulSoup
@@ -27,15 +20,12 @@ TIMEOUT = 30
 
 def fetch_and_read(
     url: str,
+    requested_code: str | None = None
 ) -> str | None:
     """
     URL'deki dokümanı indirir ve metin içeriğini döndürür.
-
-    Desteklenen biçimler:
-    - PDF
-    - DOCX
-    - ZIP içindeki DOCX dosyaları
-    - HTML
+    requested_code verilirse ZIP içinden doğru belgenin 
+    filtrelenmesini sağlar.
     """
 
     try:
@@ -97,7 +87,8 @@ def fetch_and_read(
         in content_type
     ):
         return _read_zip(
-            resp.content
+            resp.content,
+            requested_code
         )
 
     # -----------------------------------------------------
@@ -140,22 +131,36 @@ def _read_docx(
     raw_bytes: bytes,
 ) -> str:
     """
-    DOCX dosyasındaki paragraph metinlerini çıkarır.
+    DOCX dosyasındaki paragraph metinlerini ve tabloları çıkarır.
+    Bozuk dosyalarda kodun çökmesini engeller.
     """
 
-    import docx
-
-    doc = docx.Document(
-        io.BytesIO(
-            raw_bytes
+    try:
+        doc = docx.Document(
+            io.BytesIO(
+                raw_bytes
+            )
         )
-    )
+        
+        full_text = []
 
-    return "\n".join(
-        paragraph.text
-        for paragraph
-        in doc.paragraphs
-    )
+        # 1. Paragrafları oku
+        for para in doc.paragraphs:
+            if para.text.strip():
+                full_text.append(para.text.strip())
+
+        # 2. Tablo içindeki hücreleri oku (Standardın asıl içeriği genelde buradadır)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        full_text.append(cell.text.strip())
+
+        return "\n".join(full_text)
+
+    except Exception as e:
+        print(f"[FETCHER HATA] DOCX okunamadı veya bozuk: {e}")
+        return ""
 
 
 def _docx_sort_key(
@@ -163,16 +168,6 @@ def _docx_sort_key(
 ) -> tuple[int, str]:
     """
     3GPP'nin çok parçalı DOCX paketlerini doğru sıraya dizer.
-
-    Örnek:
-
-    24501-k00_0_cover.docx
-    24501-k00_1_Main-Body_s00_s04.docx
-    24501-k00_2_Main-Body_s05_s0504.docx
-    ...
-    24501-k00_6_Annexes_sA_sHistory.docx
-
-    Dosya adındaki _0_, _1_, _2_ gibi sıra numarasını kullanır.
     """
 
     basename = (
@@ -194,8 +189,6 @@ def _docx_sort_key(
             basename.lower(),
         )
 
-    # Sıra numarası olmayan DOCX'ler
-    # numaralı parçaların sonuna gider.
     return (
         999999,
         basename.lower(),
@@ -204,27 +197,11 @@ def _docx_sort_key(
 
 def _read_zip(
     raw_bytes: bytes,
+    requested_code: str | None = None
 ) -> str:
     """
-    ZIP içindeki TÜM DOCX dosyalarını okur.
-
-    3GPP'nin büyük standartları bazen tek DOCX yerine
-    birden fazla Word dosyasına bölünmüş olarak yayınlanır.
-
-    Örneğin TS 24.501:
-        0_cover
-        1_Main-Body
-        2_Main-Body
-        ...
-        6_Annexes
-
-    Eski davranış yalnızca ilk DOCX'i okuyordu.
-    Bu nedenle TS 24.501 gibi çok parçalı standartların
-    ana gövdesi kaybolabiliyordu.
-
-    Yeni davranış bütün DOCX parçalarını mantıksal sıraya
-    koyar, tek tek okur ve tek bir doküman metni olarak
-    birleştirir.
+    ZIP içindeki TÜM geçerli DOCX dosyalarını okur.
+    macOS metadata dosyalarını eler ve hedef koda uymayan alakasız dosyaları reddeder.
     """
 
     with zipfile.ZipFile(
@@ -237,19 +214,23 @@ def _read_zip(
             name
             for name
             in archive.namelist()
-            if name.lower().endswith(
-                ".docx"
-            )
-            and not name.startswith(
-                "__MACOSX/"
-            )
-            and not name.split("/")[-1].startswith(
-                "~$"
-            )
+            if name.lower().endswith(".docx")
+            and not name.startswith("__MACOSX/")
+            and not name.split("/")[-1].startswith("~$")
+            and not name.split("/")[-1].startswith("._")  # EKLENDİ: macOS metadata gizli dosyaları elendi
         ]
 
         if not docx_names:
             return ""
+
+        # EKLENDİ: Eğer istenen bir kod varsa (örn: TS 23.366),
+        # sadece isminde '23366' geçen dosyaları filtrele (Yanlış belge okumayı engeller)
+        if requested_code:
+            norm_code = re.sub(r"\D", "", requested_code)
+            if norm_code:
+                matched_names = [n for n in docx_names if norm_code in n.split("/")[-1]]
+                if matched_names:
+                    docx_names = matched_names
 
         docx_names.sort(
             key=_docx_sort_key
@@ -275,22 +256,17 @@ def _read_zip(
                 if not extracted_text:
                     continue
 
-                # Parçalar arasında açık sınır bırakıyoruz.
-                # Chunker gerçek clause başlıklarını yine
-                # kendi kurallarına göre tespit edecek.
                 text_parts.append(
                     extracted_text
                 )
 
             except Exception as error:
                 print(
-                    "[FETCHER] ZIP içindeki DOCX "
-                    "okunamadı:",
+                    "[FETCHER] ZIP içindeki DOCX okunamadı:",
                     docx_name,
                     "|",
                     error,
                 )
-
                 continue
 
         return "\n\n".join(

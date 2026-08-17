@@ -1,16 +1,3 @@
-"""Resolves a Reference to a real, verified document URL.
-
-Unlike string-pattern guessing, this actually fetches directory/index
-pages and parses their real links -- because org URL structures (e.g.
-ETSI's version subfolders) aren't reliably guessable.
-
-Chain per org:
-    3GPP  -> fetch archive folder listing, pick latest version, find file
-    IETF  -> deterministic (rfc-editor.org URL pattern is stable, no versions)
-    ETSI  -> fetch folder listing twice (range folder, then version folder)
-    ITU-T -> fetch the T-REC landing page, parse for a free PDF link
-    GSMA / ATIS -> no reliable folder structure; site-restricted search
-"""
 
 import os
 import re
