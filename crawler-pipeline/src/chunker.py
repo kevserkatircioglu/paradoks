@@ -140,7 +140,7 @@ GPP_ANNEX_HEADING = re.compile(
     r"Annex[ \t]+"
     r"([A-Z]|\d+)"
     r"(?:[ \t]*\([^)]*\))?"
-    r"[ \t]*:?"
+    r"[ \t]*:"
     r"[ \t]*(.*?)"
     r"\s*$",
     re.IGNORECASE,
@@ -1247,12 +1247,12 @@ def _split_3gpp_clauses(
     Öncelikli yöntem:
         TOC whitelist
 
-    Normal heading bulunamazsa kontrollü recovery:
+    Gerçek içerikte yalnızca TOC'da bulunan
+    heading'ler yeni clause başlatır.
 
-        Title-only
-        Suffix-number
-
-    kullanılır.
+    Extraction sırasında bazı heading numaralarının
+    kısmen veya tamamen kaybolması ayrı recovery
+    adımında ele alınacaktır.
     """
 
     if not document_text:
@@ -1272,6 +1272,10 @@ def _split_3gpp_clauses(
         )
     )
 
+    # -------------------------------------------------
+    # TOC YOKSA
+    # -------------------------------------------------
+
     if not toc_sections:
 
         return (
@@ -1281,14 +1285,8 @@ def _split_3gpp_clauses(
         )
 
     # -------------------------------------------------
-    # TOC SIRA HARİTASI
+    # GERÇEK İÇERİK BAŞLANGICI
     # -------------------------------------------------
-
-    toc_positions = (
-        _build_3gpp_toc_positions(
-            toc_sections
-        )
-    )
 
     content_start = (
         _find_3gpp_content_start(
@@ -1301,20 +1299,14 @@ def _split_3gpp_clauses(
     if content_start is None:
 
         content_start = (
-            (toc_end + 1)
+            toc_end + 1
             if toc_end is not None
             else 0
         )
 
     # -------------------------------------------------
-    # GERÇEK TARAMA BAŞLANGICI
+    # CLAUSE TOPLAMA
     # -------------------------------------------------
-
-    scan_start = (
-        (toc_end + 1)
-        if toc_end is not None
-        else 0
-    )
 
     clauses: list[
         tuple[
@@ -1324,119 +1316,31 @@ def _split_3gpp_clauses(
         ]
     ] = []
 
-    current = None
+    current_clause_no: str | None = None
+    current_clause_title: str | None = None
+    current_body: list[str] = []
 
-    seen_sections: set[
-        str
-    ] = set()
+    seen_sections: set[str] = set()
 
-    # Son kabul edilen clause'un TOC sırası.
-    #
-    # Recovery'nin geriye dönük yanlış eşleşmesini
-    # engeller.
-    last_toc_position = -1
+    # -------------------------------------------------
+    # CONTENT START'TAN İTİBAREN TARA
+    # -------------------------------------------------
 
-    i = scan_start
+    i = content_start
 
     while i < len(lines):
 
-        candidate = (
+        line = (
             lines[i]
-            .strip()
         )
 
-        normalized_candidate = (
-            _clean_3gpp_title(
-                candidate
-            ).casefold()
-        )
-
-        # -------------------------------------------------
-        # NUMARASI KAYBOLMUŞ SCOPE
-        # -------------------------------------------------
-
-        if (
-            normalized_candidate == "scope"
-            and "1" not in seen_sections
-        ):
-
-            scope_ids = [
-                clause_no
-                for clause_no, title
-                in toc_sections.items()
-                if (
-                    _clean_3gpp_title(
-                        title
-                    ).casefold()
-                    == "scope"
-                )
-                and (
-                    toc_positions.get(
-                        clause_no,
-                        -1,
-                    )
-                    > last_toc_position
-                )
-            ]
-
-            # Scope title'ı TOC'da tek bir clause ise
-            # güvenli şekilde kullan.
-            if len(scope_ids) == 1:
-
-                scope_id = (
-                    scope_ids[0]
-                )
-
-            elif (
-                "2" in toc_sections
-                and "1" not in toc_sections
-            ):
-
-                scope_id = "1"
-
-            else:
-
-                scope_id = None
-
-            if scope_id is not None:
-
-                if current:
-
-                    clauses.append(
-                        current
-                    )
-
-                current = (
-                    scope_id,
-                    "Scope",
-                    [],
-                )
-
-                seen_sections.add(
-                    scope_id
-                )
-
-                if (
-                    scope_id
-                    in toc_positions
-                ):
-
-                    last_toc_position = (
-                        toc_positions[
-                            scope_id
-                        ]
-                    )
-
-                i += 1
-                continue
-
-        # -------------------------------------------------
-        # 1. NORMAL WHITELIST HEADING
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # TOC WHITELIST HEADING KONTROLÜ
+        # ---------------------------------------------
 
         heading = (
             _match_3gpp_heading_against_toc(
-                line=lines[i],
+                line=line,
                 toc_sections=toc_sections,
             )
         )
@@ -1448,133 +1352,88 @@ def _split_3gpp_clauses(
                 clause_title,
             ) = heading
 
-            heading_position = (
-                toc_positions.get(
-                    clause_number,
-                    -1,
-                )
-            )
-
+            # Aynı section ikinci kez görülürse
+            # yeni clause açma.
             if (
                 clause_number
                 not in seen_sections
-                and (
-                    heading_position
-                    > last_toc_position
-                )
             ):
 
-                if current:
+                # Önce mevcut clause'u kapat.
+                if (
+                    current_clause_no
+                    is not None
+                ):
 
                     clauses.append(
-                        current
+                        (
+                            current_clause_no,
+                            (
+                                current_clause_title
+                                or ""
+                            ),
+                            "\n".join(
+                                current_body
+                            ).strip(),
+                        )
                     )
 
-                current = (
-                    clause_number,
-                    clause_title,
-                    [],
+                # Yeni clause aç.
+                current_clause_no = (
+                    clause_number
                 )
+
+                current_clause_title = (
+                    clause_title
+                )
+
+                current_body = []
 
                 seen_sections.add(
                     clause_number
                 )
 
-                last_toc_position = (
-                    heading_position
-                )
-
                 i += 1
                 continue
 
-        # -------------------------------------------------
-        # 2. RECOVERY
-        #
-        # Normal heading bulunamadıysa:
-        #
-        # - title_only
-        # - suffix_number
-        #
-        # denenir.
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # MEVCUT CLAUSE BODY
+        # ---------------------------------------------
 
-        recovered_heading = (
-            _match_3gpp_recovered_heading(
-                line=lines[i],
-                toc_sections=toc_sections,
-                seen_sections=seen_sections,
-                toc_positions=toc_positions,
-                last_toc_position=last_toc_position,
-            )
-        )
+        if (
+            current_clause_no
+            is not None
+        ):
 
-        if recovered_heading is not None:
-
-            (
-                clause_number,
-                clause_title,
-                _recovery_type,
-            ) = recovered_heading
-
-            if current:
-
-                clauses.append(
-                    current
-                )
-
-            current = (
-                clause_number,
-                clause_title,
-                [],
-            )
-
-            seen_sections.add(
-                clause_number
-            )
-
-            last_toc_position = (
-                toc_positions.get(
-                    clause_number,
-                    last_toc_position,
-                )
-            )
-
-            i += 1
-            continue
-
-        # -------------------------------------------------
-        # NORMAL BODY
-        # -------------------------------------------------
-
-        if current:
-
-            current[2].append(
-                lines[i]
+            current_body.append(
+                line
             )
 
         i += 1
 
-    if current:
+    # -------------------------------------------------
+    # SON CLAUSE
+    # -------------------------------------------------
+
+    if (
+        current_clause_no
+        is not None
+    ):
 
         clauses.append(
-            current
+            (
+                current_clause_no,
+                (
+                    current_clause_title
+                    or ""
+                ),
+                "\n".join(
+                    current_body
+                ).strip(),
+            )
         )
 
-    return [
-        (
-            clause_no,
-            clause_title,
-            "\n".join(
-                body
-            ).strip(),
-        )
-        for (
-            clause_no,
-            clause_title,
-            body,
-        ) in clauses
-    ]
-
+    return clauses
 
 # =========================================================
 # IETF TABLE OF CONTENTS
