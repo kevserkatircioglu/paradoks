@@ -1316,11 +1316,6 @@ def _split_3gpp_clauses(
         else 0
     )
 
-    scan_start = max(
-        scan_start,
-        content_start - 30,
-    )
-
     clauses: list[
         tuple[
             str,
