@@ -535,18 +535,10 @@ def _extract_3gpp_toc(
     """
     3GPP Contents bölümünden whitelist çıkarır.
 
-    TOC bittikten sonra gerçek içerikteki clause'ların
-    yanlışlıkla TOC'a eklenmesini önlemek için,
-    başarılı TOC girişlerinden sonra kısa bir tolerans
+    TOC içerisindeki entry'ler çoğunlukla art arda gelir.
+    Gerçek içerikte tesadüfen TOC regex'ine benzeyen satırların
+    whitelist'e eklenmesini önlemek için ardışıklık kontrolü
     uygulanır.
-
-    Returns:
-
-        (
-            toc_sections,
-            toc_start,
-            toc_end
-        )
     """
 
     toc_start = (
@@ -556,11 +548,7 @@ def _extract_3gpp_toc(
     )
 
     if toc_start is None:
-        return (
-            {},
-            None,
-            None,
-        )
+        return {}, None, None
 
     sections: dict[str, str] = {}
 
@@ -574,20 +562,19 @@ def _extract_3gpp_toc(
 
     i = toc_start + 1
 
+    # TOC başladıktan sonra kaç satır üst üste
+    # geçerli entry görmediğimizi takip ediyoruz.
+    gap_count = 0
+
+    # Henüz gerçek TOC entry görmediysek biraz daha
+    # toleranslı davran.
+    toc_started = False
+
     while i < scan_end:
-
-        raw_line = (
-            lines[i]
-            or ""
-        )
-
-        stripped = (
-            raw_line.strip()
-        )
 
         parsed = (
             _parse_3gpp_toc_entry(
-                raw_line
+                lines[i]
             )
         )
 
@@ -609,26 +596,23 @@ def _extract_3gpp_toc(
             toc_end = i
             last_match_index = i
 
+            toc_started = True
+            gap_count = 0
+
             i += 1
             continue
 
-        # -------------------------------------------------
-        # TOC bittikten sonra genellikle Foreword,
-        # version explanation, introduction vb. gelir.
-        #
-        # Önceki 80 satırlık tolerans gerçek içeriğe
-        # kadar sarkabiliyordu.
-        #
-        # 20 satır yeterli güvenlik payıdır.
-        # -------------------------------------------------
+        if toc_started:
 
-        if (
-            sections
-            and (
-                i - last_match_index
-            ) > 20
-        ):
-            break
+            gap_count += 1
+
+            # 3GPP Contents tablolarında gerçek entry'ler
+            # genellikle birbirine çok yakındır.
+            #
+            # 6 satır boyunca yeni entry gelmiyorsa TOC
+            # bitmiş kabul edilir.
+            if gap_count > 6:
+                break
 
         i += 1
 
@@ -983,13 +967,9 @@ def _split_3gpp_clauses(
     3GPP dokümanını clause bazında ayırır.
 
     Öncelikli yöntem:
+        TOC whitelist
 
-        Contents / TOC whitelist
-
-    Scope zorunlu değildir.
-
-    Bazı text extraction'larda ilk section numarası
-    kaybolabilir:
+    Extraction sırasında ilk clause numarası kaybolmuşsa:
 
         Scope
         ...
@@ -1003,7 +983,7 @@ def _split_3gpp_clauses(
         ...
         2 References
 
-    Bu durum kontrollü şekilde desteklenir.
+    biçimleri kontrollü şekilde kurtarılır.
     """
 
     if not document_text:
@@ -1023,12 +1003,7 @@ def _split_3gpp_clauses(
         )
     )
 
-    # -------------------------------------------------
-    # TOC YOK
-    # -------------------------------------------------
-
     if not toc_sections:
-
         return (
             _split_3gpp_without_toc(
                 lines
@@ -1043,20 +1018,43 @@ def _split_3gpp_clauses(
         )
     )
 
-    # -------------------------------------------------
-    # Eğer whitelist'e göre başlangıç bulunamadıysa,
-    # TOC sonrasından başlayacağız.
-    # -------------------------------------------------
-
     if content_start is None:
-
         content_start = (
-            (
-                toc_end + 1
-            )
+            (toc_end + 1)
             if toc_end is not None
             else 0
         )
+
+    # -------------------------------------------------
+    # GERÇEK TARAMA BAŞLANGICI
+    #
+    # content_start'ın biraz öncesini de tarıyoruz.
+    #
+    # Çünkü extraction:
+    #
+    # Scope
+    # ...
+    # 2 References
+    #
+    # üretmiş olabilir ve _find_3gpp_content_start()
+    # doğal olarak "2 References" satırını döndürür.
+    # -------------------------------------------------
+
+    scan_start = (
+        (toc_end + 1)
+        if toc_end is not None
+        else 0
+    )
+
+    # content_start çok ilerideyse bile Foreword bölümünü
+    # komple chunklamak istemiyoruz.
+    #
+    # Bu yüzden content_start'tan en fazla 30 satır geriye
+    # bakıyoruz.
+    scan_start = max(
+        scan_start,
+        content_start - 30,
+    )
 
     clauses: list[
         tuple[
@@ -1067,19 +1065,9 @@ def _split_3gpp_clauses(
     ] = []
 
     current = None
-
     seen_sections: set[str] = set()
 
-    # -------------------------------------------------
-    # NUMARASI DÜŞMÜŞ İLK SECTION ADAYLARI
-    #
-    # Bunları sadece ilk gerçek whitelist heading
-    # görülmeden önce değerlendireceğiz.
-    # -------------------------------------------------
-
-    first_real_heading_seen = False
-
-    i = content_start
+    i = scan_start
 
     while i < len(lines):
 
@@ -1096,25 +1084,11 @@ def _split_3gpp_clauses(
 
         # -------------------------------------------------
         # NUMARASI KAYBOLMUŞ SCOPE
-        #
-        # Örnek:
-        #
-        # Scope
-        # ...
-        # 2 References
-        #
-        # Eğer TOC'da Scope varsa onun gerçek kimliğini
-        # kullanırız.
-        #
-        # TOC'da Scope yoksa ama bir sonraki gerçek
-        # section "2" ise, eksik olan section'ı "1"
-        # olarak kabul etmek makuldür.
         # -------------------------------------------------
 
         if (
-            not first_real_heading_seen
-            and normalized_candidate
-            == "scope"
+            normalized_candidate == "scope"
+            and "1" not in seen_sections
         ):
 
             scope_ids = [
@@ -1146,11 +1120,7 @@ def _split_3gpp_clauses(
 
                 scope_id = None
 
-            if (
-                scope_id is not None
-                and scope_id
-                not in seen_sections
-            ):
+            if scope_id is not None:
 
                 if current:
                     clauses.append(
@@ -1171,64 +1141,6 @@ def _split_3gpp_clauses(
                 continue
 
         # -------------------------------------------------
-        # NUMARASI KAYBOLMUŞ INTRODUCTION
-        #
-        # TR 26.939 benzeri extraction:
-        #
-        # Introduction
-        # ...
-        # Scope
-        # ...
-        # 2 References
-        #
-        # Introduction burada bağımsız numbered clause
-        # olarak doğrulanamıyorsa metadata üretmiyoruz;
-        # Scope gelene kadar atlıyoruz.
-        # -------------------------------------------------
-
-        if (
-            not first_real_heading_seen
-            and normalized_candidate
-            == "introduction"
-            and current is None
-        ):
-
-            i += 1
-
-            while i < len(lines):
-
-                next_candidate = (
-                    lines[i]
-                    .strip()
-                )
-
-                next_normalized = (
-                    _clean_3gpp_title(
-                        next_candidate
-                    ).casefold()
-                )
-
-                if (
-                    next_normalized
-                    == "scope"
-                ):
-                    break
-
-                heading_probe = (
-                    _match_3gpp_heading_against_toc(
-                        line=lines[i],
-                        toc_sections=toc_sections,
-                    )
-                )
-
-                if heading_probe is not None:
-                    break
-
-                i += 1
-
-            continue
-
-        # -------------------------------------------------
         # NORMAL WHITELIST HEADING
         # -------------------------------------------------
 
@@ -1241,8 +1153,6 @@ def _split_3gpp_clauses(
 
         if heading is not None:
 
-            first_real_heading_seen = True
-
             (
                 clause_number,
                 clause_title,
@@ -1254,7 +1164,6 @@ def _split_3gpp_clauses(
             ):
 
                 if current:
-
                     clauses.append(
                         current
                     )
@@ -1273,7 +1182,6 @@ def _split_3gpp_clauses(
                 continue
 
         if current:
-
             current[2].append(
                 lines[i]
             )
@@ -1281,7 +1189,6 @@ def _split_3gpp_clauses(
         i += 1
 
     if current:
-
         clauses.append(
             current
         )
@@ -1300,7 +1207,6 @@ def _split_3gpp_clauses(
             body,
         ) in clauses
     ]
-
 # =========================================================
 # IETF TABLE OF CONTENTS
 # =========================================================
