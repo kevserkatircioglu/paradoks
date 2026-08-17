@@ -49,8 +49,17 @@ kaybolmuşsa:
         ->
     PDP context activation procedures
 
+    -TMSI reallocation procedures
+        ->
+    P-TMSI reallocation procedures
+
 Recovery yalnızca TOC içerisinde güvenli bir
 eşleşme bulunduğunda uygulanır.
+
+Fuzzy/damaged recovery yalnızca TOC'da sıradaki
+beklenen clause için uygulanır. Böylece gövde içindeki
+normal metinlerin parser'ı ilerideki clause'lara yanlışlıkla
+atlatması engellenir.
 """
 
 import re
@@ -79,6 +88,17 @@ GENERIC_CLAUSE_HEADING = re.compile(
 
 # =========================================================
 # 3GPP CLAUSE TOKEN
+#
+# Örnek:
+#
+# 0
+# 0a
+# 1
+# 1.1
+# 9.1.3.4.2
+# A
+# A.1
+# A.1.3
 # =========================================================
 
 GPP_CLAUSE_TOKEN_PATTERN = (
@@ -107,6 +127,10 @@ GPP_SECTION_HEADING = re.compile(
 
 # =========================================================
 # 3GPP RECOVERY - SUFFIX HEADING
+#
+# .1 Title
+# .2 Title
+# .1.2 Title
 # =========================================================
 
 GPP_SUFFIX_HEADING = re.compile(
@@ -474,6 +498,8 @@ def _parse_3gpp_toc_entry(
     if not title:
         return None
 
+    # "650 Route des Lucioles ..." gibi
+    # adres satırlarını engelle.
     if (
         clause_number.isdigit()
         and "." not in clause_number
@@ -602,6 +628,74 @@ def _build_3gpp_toc_positions(
 
 
 # =========================================================
+# 3GPP SIRADAKİ BEKLENEN CLAUSE
+# =========================================================
+
+def _get_next_3gpp_toc_clause(
+    toc_sections: dict[str, str],
+    toc_positions: dict[str, int],
+    seen_sections: set[str],
+    last_toc_position: int,
+) -> tuple[
+    str,
+    str,
+    int,
+] | None:
+    """
+    last_toc_position sonrasında TOC'da gelen ilk
+    görülmemiş clause'u döndürür.
+
+    Fuzzy recovery yalnızca bu clause üzerinde çalışır.
+
+    Böylece örneğin abbreviation kısmındaki:
+
+        MM Mobility Management
+
+    satırı yanlışlıkla ilerideki:
+
+        4.1 Mobility Management
+
+    clause'una atlayamaz.
+    """
+
+    target_position = (
+        last_toc_position + 1
+    )
+
+    for (
+        clause_number,
+        clause_title,
+    ) in toc_sections.items():
+
+        position = (
+            toc_positions.get(
+                clause_number,
+                -1,
+            )
+        )
+
+        if (
+            position
+            != target_position
+        ):
+            continue
+
+        if (
+            clause_number
+            in seen_sections
+        ):
+            continue
+
+        return (
+            clause_number,
+            clause_title,
+            position,
+        )
+
+    return None
+
+
+# =========================================================
 # 3GPP GERÇEK HEADING MATCH
 # =========================================================
 
@@ -636,12 +730,6 @@ def _match_3gpp_heading_against_toc(
             annex_match
             .group(1)
             .upper()
-        )
-
-        raw_title = (
-            annex_match
-            .group(2)
-            .strip()
         )
 
         if annex_id.isdigit():
@@ -774,7 +862,10 @@ def _match_3gpp_recovered_heading(
             expected_title,
         ) in toc_sections.items():
 
-            if clause_number in seen_sections:
+            if (
+                clause_number
+                in seen_sections
+            ):
                 continue
 
             toc_position = (
@@ -791,7 +882,8 @@ def _match_3gpp_recovered_heading(
                 continue
 
             if not (
-                clause_number.upper()
+                clause_number
+                .upper()
                 .endswith(
                     suffix.upper()
                 )
@@ -808,6 +900,7 @@ def _match_3gpp_recovered_heading(
                 (
                     clause_number,
                     expected_title,
+                    toc_position,
                 )
             )
 
@@ -816,6 +909,7 @@ def _match_3gpp_recovered_heading(
             (
                 clause_number,
                 clause_title,
+                _position,
             ) = possible_matches[0]
 
             return (
@@ -842,6 +936,13 @@ def _match_3gpp_recovered_heading(
     if len(candidate_title) > 300:
         return None
 
+    # Normal body field'larını heading olarak alma.
+    if re.match(
+        r"^[a-zA-Z]\)",
+        candidate_title,
+    ):
+        return None
+
     possible_matches = []
 
     for (
@@ -849,7 +950,10 @@ def _match_3gpp_recovered_heading(
         expected_title,
     ) in toc_sections.items():
 
-        if clause_number in seen_sections:
+        if (
+            clause_number
+            in seen_sections
+        ):
             continue
 
         toc_position = (
@@ -875,6 +979,7 @@ def _match_3gpp_recovered_heading(
             (
                 clause_number,
                 expected_title,
+                toc_position,
             )
         )
 
@@ -884,6 +989,7 @@ def _match_3gpp_recovered_heading(
     (
         clause_number,
         clause_title,
+        _position,
     ) = possible_matches[0]
 
     return (
@@ -905,6 +1011,8 @@ def _normalize_3gpp_fuzzy_title(
         text or ""
     ).strip()
 
+    # .1 Title gibi suffix numarasını karşılaştırmadan
+    # önce kaldır.
     value = re.sub(
         r"^\.\d+(?:\.\d+)*\s+",
         "",
@@ -1022,6 +1130,30 @@ def _match_3gpp_damaged_heading(
     str,
     str,
 ] | None:
+    """
+    Extraction nedeniyle başı bozulmuş başlıkları kurtarır.
+
+    Örnek:
+
+        ttached subscribers
+            ->
+        Attached subscribers
+
+        DP context activation procedures
+            ->
+        PDP context activation procedures
+
+        -TMSI reallocation procedures
+            ->
+        P-TMSI reallocation procedures
+
+    ÖNEMLİ:
+    Fuzzy recovery yalnızca TOC'daki bir sonraki
+    beklenen clause için uygulanır.
+
+    Böylece sıradaki clause atlanıp daha ilerideki bir
+    clause yanlışlıkla açılmaz.
+    """
 
     candidate = (
         line or ""
@@ -1047,9 +1179,24 @@ def _match_3gpp_damaged_heading(
     ):
         return None
 
+    # Bullet:
+    #
+    # - something
+    # -\tsomething
+    #
+    # Ancak:
+    #
+    # -TMSI reallocation procedures
+    #
+    # extraction hasarı olabilir. Onu ENGELLEMİYORUZ.
+    if re.match(
+        r"^-\s+",
+        candidate,
+    ):
+        return None
+
     if candidate.startswith(
         (
-            "-",
             "•",
             "[",
         )
@@ -1060,7 +1207,7 @@ def _match_3gpp_damaged_heading(
         return None
 
     # -------------------------------------------------
-    # SUFFIX
+    # SUFFIX VAR MI?
     # -------------------------------------------------
 
     suffix = None
@@ -1085,125 +1232,62 @@ def _match_3gpp_damaged_heading(
         )
 
     # -------------------------------------------------
-    # ADAYLAR
+    # YALNIZCA SIRADAKİ TOC CLAUSE
     # -------------------------------------------------
 
-    candidates = []
-
-    # Parser yanlış bir satırı atladığında çok uzağa
-    # sıçramasın.
-    max_lookahead = 20
-
-    for (
-        clause_number,
-        expected_title,
-    ) in toc_sections.items():
-
-        if clause_number in seen_sections:
-            continue
-
-        toc_position = (
-            toc_positions.get(
-                clause_number,
-                -1,
-            )
-        )
-
-        if (
-            toc_position
-            <= last_toc_position
-        ):
-            continue
-
-        distance = (
-            toc_position
-            - last_toc_position
-        )
-
-        if distance > max_lookahead:
-            continue
-
-        if suffix is not None:
-
-            if not (
-                clause_number
-                .upper()
-                .endswith(
-                    suffix.upper()
-                )
-            ):
-                continue
-
-        score = (
-            _3gpp_fuzzy_title_score(
-                candidate_title,
-                expected_title,
-            )
-        )
-
-        candidates.append(
-            (
-                score,
-                toc_position,
-                clause_number,
-                expected_title,
-            )
-        )
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda item: (
-            -item[0],
-            item[1],
+    next_clause = (
+        _get_next_3gpp_toc_clause(
+            toc_sections=toc_sections,
+            toc_positions=toc_positions,
+            seen_sections=seen_sections,
+            last_toc_position=last_toc_position,
         )
     )
 
-    (
-        best_score,
-        best_position,
-        best_clause,
-        best_title,
-    ) = candidates[0]
-
-    # -------------------------------------------------
-    # MINIMUM SKOR
-    # -------------------------------------------------
-
-    if best_score < 0.84:
+    if next_clause is None:
         return None
 
+    (
+        clause_number,
+        expected_title,
+        _toc_position,
+    ) = next_clause
+
     # -------------------------------------------------
-    # AMBIGUITY
+    # SUFFIX UYUMU
     # -------------------------------------------------
 
-    if len(candidates) > 1:
+    if suffix is not None:
 
-        second_score = (
-            candidates[1][0]
-        )
-
-        score_gap = (
-            best_score
-            - second_score
-        )
-
-        immediate_next = (
-            best_position
-            ==
-            last_toc_position + 1
-        )
-
-        if (
-            score_gap < 0.03
-            and not immediate_next
+        if not (
+            clause_number
+            .upper()
+            .endswith(
+                suffix.upper()
+            )
         ):
             return None
 
+    # -------------------------------------------------
+    # SCORE
+    # -------------------------------------------------
+
+    score = (
+        _3gpp_fuzzy_title_score(
+            candidate_title,
+            expected_title,
+        )
+    )
+
+    # Extraction'da ilk birkaç karakter kaybolabiliyor.
+    # 0.84 bu tip bozulmalarda yeterli ancak normal
+    # body cümlelerine karşı hâlâ muhafazakâr.
+    if score < 0.84:
+        return None
+
     return (
-        best_clause,
-        best_title,
+        clause_number,
+        expected_title,
         (
             "damaged_suffix"
             if suffix is not None
@@ -1542,7 +1626,10 @@ def _split_3gpp_clauses(
                 clause_title,
             ) = exact_heading
 
-            if clause_number not in seen_sections:
+            if (
+                clause_number
+                not in seen_sections
+            ):
 
                 position = (
                     toc_positions.get(
@@ -1551,6 +1638,11 @@ def _split_3gpp_clauses(
                     )
                 )
 
+                # Exact heading güvenilir.
+                #
+                # TOC sırasındaki ileriki bir clause ise
+                # aradaki extraction-kayıp clause'ları
+                # atlamasına izin veriyoruz.
                 if (
                     position
                     > last_toc_position
@@ -1586,13 +1678,25 @@ def _split_3gpp_clauses(
                 _recovery_type,
             ) = recovered
 
-            open_clause(
-                clause_number,
-                clause_title,
+            position = (
+                toc_positions.get(
+                    clause_number,
+                    -1,
+                )
             )
 
-            i += 1
-            continue
+            if (
+                position
+                > last_toc_position
+            ):
+
+                open_clause(
+                    clause_number,
+                    clause_title,
+                )
+
+                i += 1
+                continue
 
         # =================================================
         # 3. DAMAGED / FUZZY RECOVERY
@@ -1628,7 +1732,10 @@ def _split_3gpp_clauses(
         # BODY
         # =================================================
 
-        if current_clause_no is not None:
+        if (
+            current_clause_no
+            is not None
+        ):
 
             current_body.append(
                 line
