@@ -535,6 +535,11 @@ def _extract_3gpp_toc(
     """
     3GPP Contents bölümünden whitelist çıkarır.
 
+    TOC bittikten sonra gerçek içerikteki clause'ların
+    yanlışlıkla TOC'a eklenmesini önlemek için,
+    başarılı TOC girişlerinden sonra kısa bir tolerans
+    uygulanır.
+
     Returns:
 
         (
@@ -551,40 +556,38 @@ def _extract_3gpp_toc(
     )
 
     if toc_start is None:
-
         return (
             {},
             None,
             None,
         )
 
-    sections: dict[
-        str,
-        str,
-    ] = {}
+    sections: dict[str, str] = {}
 
-    toc_end = (
-        toc_start
-    )
-
-    last_match_index = (
-        toc_start
-    )
+    toc_end = toc_start
+    last_match_index = toc_start
 
     scan_end = min(
         len(lines),
         toc_start + 1500,
     )
 
-    i = (
-        toc_start + 1
-    )
+    i = toc_start + 1
 
     while i < scan_end:
 
+        raw_line = (
+            lines[i]
+            or ""
+        )
+
+        stripped = (
+            raw_line.strip()
+        )
+
         parsed = (
             _parse_3gpp_toc_entry(
-                lines[i]
+                raw_line
             )
         )
 
@@ -599,7 +602,6 @@ def _extract_3gpp_toc(
                 clause_number
                 not in sections
             ):
-
                 sections[
                     clause_number
                 ] = clause_title
@@ -607,13 +609,25 @@ def _extract_3gpp_toc(
             toc_end = i
             last_match_index = i
 
-        elif (
+            i += 1
+            continue
+
+        # -------------------------------------------------
+        # TOC bittikten sonra genellikle Foreword,
+        # version explanation, introduction vb. gelir.
+        #
+        # Önceki 80 satırlık tolerans gerçek içeriğe
+        # kadar sarkabiliyordu.
+        #
+        # 20 satır yeterli güvenlik payıdır.
+        # -------------------------------------------------
+
+        if (
             sections
             and (
                 i - last_match_index
-            ) > 80
+            ) > 20
         ):
-
             break
 
         i += 1
@@ -623,7 +637,6 @@ def _extract_3gpp_toc(
         toc_start,
         toc_end,
     )
-
 
 # =========================================================
 # 3GPP GERÇEK HEADING MATCH
@@ -973,11 +986,27 @@ def _split_3gpp_clauses(
 
         Contents / TOC whitelist
 
-    Scope aranması zorunlu değildir.
+    Scope zorunlu değildir.
+
+    Bazı text extraction'larda ilk section numarası
+    kaybolabilir:
+
+        Scope
+        ...
+        2 References
+
+    veya:
+
+        Introduction
+        ...
+        Scope
+        ...
+        2 References
+
+    Bu durum kontrollü şekilde desteklenir.
     """
 
     if not document_text:
-
         return []
 
     lines = (
@@ -1014,6 +1043,11 @@ def _split_3gpp_clauses(
         )
     )
 
+    # -------------------------------------------------
+    # Eğer whitelist'e göre başlangıç bulunamadıysa,
+    # TOC sonrasından başlayacağız.
+    # -------------------------------------------------
+
     if content_start is None:
 
         content_start = (
@@ -1034,53 +1068,56 @@ def _split_3gpp_clauses(
 
     current = None
 
-    seen_sections: set[
-        str
-    ] = set()
+    seen_sections: set[str] = set()
 
     # -------------------------------------------------
-    # Bazı extraction'larda:
+    # NUMARASI DÜŞMÜŞ İLK SECTION ADAYLARI
     #
-    # 1 Scope
-    #
-    # satırındaki section numarası kaybolup:
-    #
-    # Scope
-    #
-    # kalabiliyor.
-    #
-    # İlk gerçek whitelist heading görülmeden önce
-    # çıplak "Scope" görürsek section 1 olarak
-    # koruyabiliriz.
+    # Bunları sadece ilk gerçek whitelist heading
+    # görülmeden önce değerlendireceğiz.
     # -------------------------------------------------
 
-    bare_scope_seen = False
+    first_real_heading_seen = False
 
     i = content_start
 
     while i < len(lines):
 
         candidate = (
-            lines[i].strip()
+            lines[i]
+            .strip()
+        )
+
+        normalized_candidate = (
+            _clean_3gpp_title(
+                candidate
+            ).casefold()
         )
 
         # -------------------------------------------------
         # NUMARASI KAYBOLMUŞ SCOPE
+        #
+        # Örnek:
+        #
+        # Scope
+        # ...
+        # 2 References
+        #
+        # Eğer TOC'da Scope varsa onun gerçek kimliğini
+        # kullanırız.
+        #
+        # TOC'da Scope yoksa ama bir sonraki gerçek
+        # section "2" ise, eksik olan section'ı "1"
+        # olarak kabul etmek makuldür.
         # -------------------------------------------------
 
         if (
-            current is None
-            and not bare_scope_seen
-            and (
-                _clean_3gpp_title(
-                    candidate
-                ).casefold()
-                == "scope"
-            )
+            not first_real_heading_seen
+            and normalized_candidate
+            == "scope"
         ):
 
-            # En makul section kimliğini seç.
-            possible_scope_ids = [
+            scope_ids = [
                 clause_no
                 for clause_no, title
                 in toc_sections.items()
@@ -1092,17 +1129,37 @@ def _split_3gpp_clauses(
                 )
             ]
 
-            if possible_scope_ids:
+            if scope_ids:
 
                 scope_id = (
-                    possible_scope_ids[0]
+                    scope_ids[0]
                 )
+
+            elif (
+                "2" in toc_sections
+                and "1" not in toc_sections
+            ):
+
+                scope_id = "1"
+
+            else:
+
+                scope_id = None
+
+            if (
+                scope_id is not None
+                and scope_id
+                not in seen_sections
+            ):
+
+                if current:
+                    clauses.append(
+                        current
+                    )
 
                 current = (
                     scope_id,
-                    toc_sections[
-                        scope_id
-                    ],
+                    "Scope",
                     [],
                 )
 
@@ -1110,10 +1167,66 @@ def _split_3gpp_clauses(
                     scope_id
                 )
 
-                bare_scope_seen = True
-
                 i += 1
                 continue
+
+        # -------------------------------------------------
+        # NUMARASI KAYBOLMUŞ INTRODUCTION
+        #
+        # TR 26.939 benzeri extraction:
+        #
+        # Introduction
+        # ...
+        # Scope
+        # ...
+        # 2 References
+        #
+        # Introduction burada bağımsız numbered clause
+        # olarak doğrulanamıyorsa metadata üretmiyoruz;
+        # Scope gelene kadar atlıyoruz.
+        # -------------------------------------------------
+
+        if (
+            not first_real_heading_seen
+            and normalized_candidate
+            == "introduction"
+            and current is None
+        ):
+
+            i += 1
+
+            while i < len(lines):
+
+                next_candidate = (
+                    lines[i]
+                    .strip()
+                )
+
+                next_normalized = (
+                    _clean_3gpp_title(
+                        next_candidate
+                    ).casefold()
+                )
+
+                if (
+                    next_normalized
+                    == "scope"
+                ):
+                    break
+
+                heading_probe = (
+                    _match_3gpp_heading_against_toc(
+                        line=lines[i],
+                        toc_sections=toc_sections,
+                    )
+                )
+
+                if heading_probe is not None:
+                    break
+
+                i += 1
+
+            continue
 
         # -------------------------------------------------
         # NORMAL WHITELIST HEADING
@@ -1127,6 +1240,8 @@ def _split_3gpp_clauses(
         )
 
         if heading is not None:
+
+            first_real_heading_seen = True
 
             (
                 clause_number,
@@ -1185,7 +1300,6 @@ def _split_3gpp_clauses(
             body,
         ) in clauses
     ]
-
 
 # =========================================================
 # IETF TABLE OF CONTENTS
