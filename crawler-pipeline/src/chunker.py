@@ -29,30 +29,32 @@ import re
 from models import Chunk, DocStatus
 
 
-# ---------------------------------------------------------
+# =========================================================
 # CHUNK AYARLARI
-# ---------------------------------------------------------
+# =========================================================
 
 MAX_CHUNK_CHARS = 2400
 CHUNK_OVERLAP_CHARS = 300
 
 
-# ---------------------------------------------------------
+# =========================================================
 # 3GPP / GENERIC CLAUSE
+# =========================================================
 #
 # Örnek:
 #
 # 9.1.3.4.2 Warning Message Delivery Procedure
 # 9.2.15 Void
-# ---------------------------------------------------------
+# =========================================================
 
 GENERIC_CLAUSE_HEADING = re.compile(
     r"^(\d+(?:\.\d+)*)[ \t]+(.+)$"
 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # IETF / RFC TEK SATIR HEADING
+# =========================================================
 #
 # Desteklenen örnekler:
 #
@@ -64,7 +66,7 @@ GENERIC_CLAUSE_HEADING = re.compile(
 # 1. Introduction
 # 13.2.1. Creating the Initial INVITE
 #
-# İlk section numarasını 1-99 ile sınırlıyoruz.
+# İlk section numarası 1-99 ile sınırlandırılır.
 #
 # Böylece:
 #
@@ -73,15 +75,16 @@ GENERIC_CLAUSE_HEADING = re.compile(
 # 5061 ...
 #
 # gibi değerlerin section sanılması azaltılır.
-# ---------------------------------------------------------
+# =========================================================
 
 IETF_SECTION_HEADING = re.compile(
     r"^([1-9]\d?(?:\.\d+)*)\.?[ \t]+(.+)$"
 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # IETF / RFC SADECE SECTION NUMARASI
+# =========================================================
 #
 # Text extraction bazı RFC'lerde:
 #
@@ -94,20 +97,33 @@ IETF_SECTION_HEADING = re.compile(
 # .  Introduction
 #
 # üretmektedir.
-# ---------------------------------------------------------
+# =========================================================
 
 IETF_SECTION_NUMBER = re.compile(
     r"^([1-9]\d?(?:\.\d+)*)\.?$"
 )
 
 
-# ---------------------------------------------------------
-# RFC Table of Contents - tek satır biçimi
+# =========================================================
+# RFC TABLE OF CONTENTS - TEK SATIR
+# =========================================================
 #
-# Örnek:
+# Her iki biçimi de destekler:
 #
-# 10.2.1.2 Preferences among Contact Addresses ........ 61
-# ---------------------------------------------------------
+# 10.2.1.2 Preferences among Contact Addresses ...... 61
+#
+# ve:
+#
+# 10.2.1.1   Setting the Expiration Interval
+#            of Contact Addresses                    60
+#
+# Tek satırda title + page olduğunda noktalı lider
+# bulunması ZORUNLU DEĞİLDİR.
+#
+# Kritik RFC 3261 örneği:
+#
+# 10.2.1.1   Setting the Expiration Interval of Contact Addresses    60
+# =========================================================
 
 RFC_TOC_SINGLE_LINE = re.compile(
     r"^\s*"
@@ -115,54 +131,62 @@ RFC_TOC_SINGLE_LINE = re.compile(
     r"\.?"
     r"\s+"
     r"(.+?)"
-    r"\s+\.{2,}\s*"
-    r"(\d+)"
+    r"\s{2,}"
+    r"(\d{1,4})"
     r"\s*$"
 )
 
 
-# ---------------------------------------------------------
-# Eski TOC kontrolü
+# =========================================================
+# RFC TOC - NOKTALI LİDERLİ SATIR KONTROLÜ
+# =========================================================
 #
-# _match_heading fallback modunda kullanılabilir.
-# ---------------------------------------------------------
+# Fallback kontrollerinde kullanılır.
+#
+# Örnek:
+#
+# 10.2.1.2 Preferences among Contact Addresses ...... 61
+# =========================================================
 
 RFC_TOC_LINE = re.compile(
     r"^\s*"
     r"\d+(?:\.\d+)*"
     r"\.?"
     r"\s+"
-    r".+"
-    r"\.{2,}"
-    r"\s*\d+"
+    r".+?"
+    r"\s+"
+    r"(?:\.{2,}\s*)?"
+    r"\d{1,4}"
     r"\s*$"
 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # RFC TOC PAGE NUMBER
+# =========================================================
 #
 # Split edilmiş TOC örneği:
 #
 # 13.2.1
 # Creating the Initial INVITE ....................
 # 78
-# ---------------------------------------------------------
+# =========================================================
 
 RFC_PAGE_NUMBER = re.compile(
     r"^\d{1,4}$"
 )
 
 
-# ---------------------------------------------------------
-# 3GPP Table of Contents
+# =========================================================
+# 3GPP TABLE OF CONTENTS
+# =========================================================
 #
 # Örnek:
 #
 # 9.1.3.4.2    Warning Message Delivery Procedure    27
 #
 # Son sayı sayfa numarasıdır.
-# ---------------------------------------------------------
+# =========================================================
 
 GPP_TOC_LINE = re.compile(
     r"^\s*\d+(?:\.\d+)*[ \t]+.+[ \t]+\d+\s*$"
@@ -177,7 +201,8 @@ def _normalize_whitespace(
     text: str,
 ) -> str:
     """
-    Birden fazla boşluğu tek boşluğa indirger.
+    Birden fazla whitespace karakterini
+    tek boşluğa indirger.
     """
 
     return re.sub(
@@ -193,7 +218,7 @@ def _clean_rfc_title(
     """
     RFC başlıklarını karşılaştırmaya uygun hâle getirir.
 
-    Örneğin:
+    Örnek:
 
     '.  Introduction'
         ->
@@ -208,22 +233,26 @@ def _clean_rfc_title(
         text or ""
     ).strip()
 
+    # -------------------------------------------------
     # RFC 6733 benzeri extraction:
     #
     # .  Introduction
     #
     # başındaki tek noktayı temizle.
+    # -------------------------------------------------
+
     value = re.sub(
         r"^\.\s*",
         "",
         value,
     )
 
-    # TOC dot leader:
+    # -------------------------------------------------
+    # TOC dot leader temizliği:
     #
     # Introduction ........................
-    #
-    # kısmını temizle.
+    # -------------------------------------------------
+
     value = re.sub(
         r"\s*\.{2,}.*$",
         "",
@@ -245,10 +274,49 @@ def _titles_match(
     """
 
     return (
-        _clean_rfc_title(left).casefold()
+        _clean_rfc_title(
+            left
+        ).casefold()
         ==
-        _clean_rfc_title(right).casefold()
+        _clean_rfc_title(
+            right
+        ).casefold()
     )
+
+
+def _looks_like_rfc_toc_title(
+    title: str,
+) -> bool:
+    """
+    TOC'dan çıkarılan başlığın makul olup olmadığını
+    kaba şekilde kontrol eder.
+
+    Amaç, yalnızca bir sayı veya anlamsız extraction
+    parçasının TOC entry olarak kabul edilmesini azaltmaktır.
+    """
+
+    cleaned = _clean_rfc_title(
+        title
+    )
+
+    if not cleaned:
+        return False
+
+    # Sadece sayı / section benzeri bir değer olmasın.
+    if re.fullmatch(
+        r"\d+(?:\.\d+)*\.?",
+        cleaned,
+    ):
+        return False
+
+    # En az bir alfabetik karakter içersin.
+    if not re.search(
+        r"[A-Za-z]",
+        cleaned,
+    ):
+        return False
+
+    return True
 
 
 # =========================================================
@@ -262,10 +330,13 @@ def _find_ietf_toc_start(
     RFC içerisindeki Table of Contents başlangıcını bulur.
     """
 
-    for index, line in enumerate(lines):
+    for index, line in enumerate(
+        lines
+    ):
 
         normalized = (
-            line.strip()
+            line
+            .strip()
             .casefold()
         )
 
@@ -292,10 +363,51 @@ def _extract_ietf_toc(
 
     haritasını çıkarır.
 
-    Hem tek satırlı hem de çok satırlı extraction
-    formatlarını destekler.
+    Desteklenen formatlar:
+
+    -------------------------------------------------------
+
+    FORMAT 1:
+
+        13.2.1 Creating the Initial INVITE ........ 78
+
+    -------------------------------------------------------
+
+    FORMAT 2:
+
+        10.2.1.1   Setting the Expiration Interval
+                   of Contact Addresses             60
+
+    Tek satıra extraction edilmiş hâli:
+
+        10.2.1.1   Setting the Expiration Interval
+        of Contact Addresses    60
+
+    veya doğrudan:
+
+        10.2.1.1   Setting the Expiration Interval
+                   of Contact Addresses    60
+
+    -------------------------------------------------------
+
+    FORMAT 3:
+
+        13.2.1
+        Creating the Initial INVITE ............
+        78
+
+    -------------------------------------------------------
+
+    FORMAT 4:
+
+        1
+        . Introduction .........................
+        7
+
+    -------------------------------------------------------
 
     Returns:
+
         (
             toc_sections,
             toc_start,
@@ -308,7 +420,12 @@ def _extract_ietf_toc(
     )
 
     if toc_start is None:
-        return {}, None, None
+
+        return (
+            {},
+            None,
+            None,
+        )
 
     sections: dict[
         str,
@@ -317,29 +434,56 @@ def _extract_ietf_toc(
 
     toc_end = toc_start
 
-    # Çok büyük RFC'lerde bile TOC genellikle ilk
-    # birkaç bin satır içerisindedir.
+    # RFC TOC'ları normalde dokümanın başındadır.
+    # Yine de büyük RFC'ler için geniş bir pencere
+    # bırakıyoruz.
     scan_end = min(
         len(lines),
         toc_start + 3000,
     )
 
-    i = toc_start + 1
+    i = (
+        toc_start + 1
+    )
 
-    last_match_index = toc_start
+    last_match_index = (
+        toc_start
+    )
 
     while i < scan_end:
 
-        stripped = lines[i].strip()
+        stripped = (
+            lines[i].strip()
+        )
+
+        if not stripped:
+
+            i += 1
+            continue
 
         # -------------------------------------------------
-        # FORMAT 1
+        # FORMAT 1 / FORMAT 2
         #
-        # 13.2.1 Creating the Initial INVITE ...... 78
+        # Tek satır TOC entry.
+        #
+        # Noktalı lider ZORUNLU DEĞİL.
+        #
+        # Örnek:
+        #
+        # 10.2.1.2 Preferences ............... 61
+        #
+        # veya:
+        #
+        # 10.2.1.1   Setting the Expiration
+        #             Interval ...             60
+        #
+        # extraction sonrası tek satırsa:
+        #
+        # 10.2.1.1 Setting the Expiration Interval ... 60
         # -------------------------------------------------
 
         single_match = (
-            RFC_TOC_SINGLE_LINE.match(
+            RFC_TOC_SINGLE_LINE.fullmatch(
                 stripped
             )
         )
@@ -352,28 +496,44 @@ def _extract_ietf_toc(
                 .strip()
             )
 
-            title = _clean_rfc_title(
-                single_match.group(2)
+            raw_title = (
+                single_match
+                .group(2)
+                .strip()
+            )
+
+            title = (
+                _clean_rfc_title(
+                    raw_title
+                )
             )
 
             if (
                 section_number
-                and title
-                and section_number
-                not in sections
+                and _looks_like_rfc_toc_title(
+                    title
+                )
             ):
-                sections[
+
+                if (
                     section_number
-                ] = title
+                    not in sections
+                ):
 
-            toc_end = i
-            last_match_index = i
+                    sections[
+                        section_number
+                    ] = title
 
-            i += 1
-            continue
+                toc_end = i
+                last_match_index = i
+
+                i += 1
+                continue
 
         # -------------------------------------------------
-        # FORMAT 2
+        # FORMAT 3 / FORMAT 4
+        #
+        # Çok satırlı extraction:
         #
         # 13.2.1
         # Creating the Initial INVITE ............
@@ -399,15 +559,19 @@ def _extract_ietf_toc(
                 .group(1)
             )
 
-            title_lines: list[str] = []
+            title_lines: list[
+                str
+            ] = []
 
-            j = i + 1
+            j = (
+                i + 1
+            )
 
             # Başlık extraction sırasında birkaç satıra
-            # bölünmüş olabilir.
+            # bölünebilir.
             max_title_end = min(
                 len(lines),
-                i + 7,
+                i + 8,
             )
 
             page_found = False
@@ -419,36 +583,64 @@ def _extract_ietf_toc(
                 )
 
                 if not candidate:
+
+                    # Arada tek boş satır varsa tamamen
+                    # vazgeçmeden bir sonraki satırı dene.
+                    if (
+                        title_lines
+                        and j + 1 < max_title_end
+                    ):
+                        j += 1
+                        continue
+
                     break
 
-                # Son satır yalnızca sayfa numarasıysa:
-                #
-                # 61
+                # -----------------------------------------
+                # Son satır sadece sayfa numarasıysa
+                # TOC entry tamamlanmıştır.
+                # -----------------------------------------
+
                 if RFC_PAGE_NUMBER.fullmatch(
                     candidate
                 ):
 
-                    combined_title = " ".join(
-                        title_lines
+                    combined_title = (
+                        " ".join(
+                            title_lines
+                        )
                     )
 
-                    # TOC olduğundan emin olmak için
-                    # title bölümünde dot leader bulunmasını
-                    # bekliyoruz.
-                    if (
-                        title_lines
-                        and ".." in combined_title
-                    ):
-
-                        title = _clean_rfc_title(
+                    title = (
+                        _clean_rfc_title(
                             combined_title
                         )
+                    )
+
+                    # Eski sürümde burada:
+                    #
+                    # ".." in combined_title
+                    #
+                    # zorunluydu.
+                    #
+                    # Artık DEĞİL.
+                    #
+                    # Çünkü RFC 3261:
+                    #
+                    # 10.2.1.1 Setting the Expiration ...
+                    #
+                    # satırında dot leader bulunmuyor.
+                    if (
+                        title_lines
+                        and _looks_like_rfc_toc_title(
+                            title
+                        )
+                    ):
 
                         if (
-                            title
-                            and section_number
+                            section_number
                             not in sections
                         ):
+
                             sections[
                                 section_number
                             ] = title
@@ -460,6 +652,19 @@ def _extract_ietf_toc(
 
                     break
 
+                # -----------------------------------------
+                # Eğer hemen başka section numarası geldiyse
+                # mevcut entry geçerli değildir.
+                # -----------------------------------------
+
+                if (
+                    IETF_SECTION_NUMBER.fullmatch(
+                        candidate
+                    )
+                    and title_lines
+                ):
+                    break
+
                 title_lines.append(
                     candidate
                 )
@@ -467,14 +672,19 @@ def _extract_ietf_toc(
                 j += 1
 
             if page_found:
-                i = j + 1
+
+                i = (
+                    j + 1
+                )
+
                 continue
 
         # -------------------------------------------------
-        # TOC bittiyse sonsuza kadar tarama.
+        # TOC SONU
         #
-        # Son başarılı entry'den sonra uzun süre yeni
-        # entry gelmiyorsa gerçek içerik başlamış olabilir.
+        # Son başarılı TOC entry'den sonra uzun süre
+        # yeni entry gelmiyorsa gerçek içerik başlamış
+        # kabul edilir.
         # -------------------------------------------------
 
         if (
@@ -495,7 +705,7 @@ def _extract_ietf_toc(
 
 
 # =========================================================
-# IETF GERÇEK İÇERİK BAŞLANGICI
+# IETF GERÇEK HEADING DOĞRULAMA
 # =========================================================
 
 def _match_ietf_heading_against_toc(
@@ -504,12 +714,28 @@ def _match_ietf_heading_against_toc(
     toc_sections: dict[str, str],
 ):
     """
-    Verilen satırın gerçek RFC section heading olup olmadığını
-    TOC whitelist kullanarak kontrol eder.
+    Verilen satırın gerçek RFC section heading olup
+    olmadığını TOC whitelist kullanarak kontrol eder.
+
+    Desteklenen biçimler:
+
+        1 Introduction
+
+        1. Introduction
+
+        1
+        Introduction
+
+        1
+        . Introduction
 
     Returns:
 
-        (section_number, title, consumed_lines)
+        (
+            section_number,
+            title,
+            consumed_lines
+        )
 
     veya:
 
@@ -517,17 +743,23 @@ def _match_ietf_heading_against_toc(
     """
 
     if index >= len(lines):
+
         return None
 
-    raw = lines[index]
+    raw = (
+        lines[index]
+    )
 
-    candidate = raw.strip()
+    candidate = (
+        raw.strip()
+    )
 
     if not candidate:
+
         return None
 
     # -------------------------------------------------
-    # TEK SATIR
+    # TEK SATIR HEADING
     #
     # 1 Introduction
     #
@@ -545,11 +777,15 @@ def _match_ietf_heading_against_toc(
     if same_line_match:
 
         section_number = (
-            same_line_match.group(1)
+            same_line_match
+            .group(1)
         )
 
-        title = _clean_rfc_title(
-            same_line_match.group(2)
+        title = (
+            _clean_rfc_title(
+                same_line_match
+                .group(2)
+            )
         )
 
         expected_title = (
@@ -559,12 +795,14 @@ def _match_ietf_heading_against_toc(
         )
 
         if (
-            expected_title is not None
+            expected_title
+            is not None
             and _titles_match(
                 title,
                 expected_title,
             )
         ):
+
             return (
                 section_number,
                 expected_title,
@@ -572,7 +810,7 @@ def _match_ietf_heading_against_toc(
             )
 
     # -------------------------------------------------
-    # İKİ SATIR
+    # İKİ SATIR HEADING
     #
     # 1
     # Introduction
@@ -591,11 +829,15 @@ def _match_ietf_heading_against_toc(
 
     if (
         number_match
-        and index + 1 < len(lines)
+        and (
+            index + 1
+            < len(lines)
+        )
     ):
 
         section_number = (
-            number_match.group(1)
+            number_match
+            .group(1)
         )
 
         expected_title = (
@@ -605,11 +847,14 @@ def _match_ietf_heading_against_toc(
         )
 
         if expected_title is None:
+
             return None
 
         title_candidate = (
             _clean_rfc_title(
-                lines[index + 1]
+                lines[
+                    index + 1
+                ]
             )
         )
 
@@ -617,6 +862,7 @@ def _match_ietf_heading_against_toc(
             title_candidate,
             expected_title,
         ):
+
             return (
                 section_number,
                 expected_title,
@@ -625,6 +871,10 @@ def _match_ietf_heading_against_toc(
 
     return None
 
+
+# =========================================================
+# IETF GERÇEK İÇERİK BAŞLANGICI
+# =========================================================
 
 def _find_ietf_content_start(
     lines: list[str],
@@ -648,16 +898,19 @@ def _find_ietf_content_start(
     """
 
     if not toc_sections:
+
         return None
 
     search_start = (
-        (toc_end + 1)
+        (
+            toc_end + 1
+        )
         if toc_end is not None
         else 0
     )
 
-    # İlk birkaç TOC section'ını kullanarak gerçek
-    # içerik başlangıcını arıyoruz.
+    # İlk birkaç section üzerinden içerik başlangıcını
+    # tespit ediyoruz.
     first_sections = list(
         toc_sections.keys()
     )[:10]
@@ -682,9 +935,15 @@ def _find_ietf_content_start(
         if heading is None:
             continue
 
-        section_number = heading[0]
+        section_number = (
+            heading[0]
+        )
 
-        if section_number in first_section_set:
+        if (
+            section_number
+            in first_section_set
+        ):
+
             return index
 
     return None
@@ -706,9 +965,19 @@ def _split_ietf_clauses(
 
         Table of Contents whitelist
 
-    Böylece metin içerisindeki section referansları
-    yanlışlıkla heading kabul edilmez.
+    Böylece metin içerisindeki:
+
+        Section 8.1.1
+        20.15
+        17.2.3
+
+    gibi section referanslarının yanlışlıkla gerçek
+    heading kabul edilmesi engellenir.
     """
+
+    if not document_text:
+
+        return []
 
     lines = (
         document_text.splitlines()
@@ -718,8 +987,10 @@ def _split_ietf_clauses(
         toc_sections,
         _toc_start,
         toc_end,
-    ) = _extract_ietf_toc(
-        lines
+    ) = (
+        _extract_ietf_toc(
+            lines
+        )
     )
 
     clauses: list[
@@ -733,7 +1004,7 @@ def _split_ietf_clauses(
     current = None
 
     # -------------------------------------------------
-    # TOC bulunduysa güvenli parser kullan.
+    # TOC BULUNDUYSA GÜVENLİ PARSER
     # -------------------------------------------------
 
     if toc_sections:
@@ -747,13 +1018,22 @@ def _split_ietf_clauses(
         )
 
         if content_start is None:
+
             content_start = (
-                (toc_end + 1)
+                (
+                    toc_end + 1
+                )
                 if toc_end is not None
                 else 0
             )
 
-        i = content_start
+        i = (
+            content_start
+        )
+
+        seen_sections: set[
+            str
+        ] = set()
 
         while i < len(lines):
 
@@ -773,21 +1053,39 @@ def _split_ietf_clauses(
                     consumed_lines,
                 ) = heading
 
-                if current:
-                    clauses.append(
-                        current
+                # Gerçek section aynı RFC içinde normalde
+                # ikinci kez başlamamalıdır.
+                #
+                # TOC whitelist zaten güçlü filtre sağlar,
+                # bu ek kontrol içerikte tekrar görülen
+                # başlıklara karşı güvenlik sağlar.
+                if (
+                    section_number
+                    not in seen_sections
+                ):
+
+                    if current:
+
+                        clauses.append(
+                            current
+                        )
+
+                    current = (
+                        section_number,
+                        section_title,
+                        [],
                     )
 
-                current = (
-                    section_number,
-                    section_title,
-                    [],
-                )
+                    seen_sections.add(
+                        section_number
+                    )
 
-                i += consumed_lines
-                continue
+                    i += consumed_lines
+
+                    continue
 
             if current:
+
                 current[2].append(
                     lines[i]
                 )
@@ -795,6 +1093,7 @@ def _split_ietf_clauses(
             i += 1
 
         if current:
+
             clauses.append(
                 current
             )
@@ -803,7 +1102,9 @@ def _split_ietf_clauses(
             (
                 clause_no,
                 clause_title,
-                "\n".join(body).strip(),
+                "\n".join(
+                    body
+                ).strip(),
             )
             for (
                 clause_no,
@@ -817,20 +1118,23 @@ def _split_ietf_clauses(
     #
     # Bazı RFC'lerde Table of Contents olmayabilir.
     #
-    # Bu durumda eski tek-satır heading davranışını
-    # koruyoruz.
+    # Bu durumda eski tek-satır heading davranışı
+    # korunur.
     # -------------------------------------------------
 
     for line in lines:
 
-        match = _match_heading(
-            line=line,
-            doc_org="IETF",
+        match = (
+            _match_heading(
+                line=line,
+                doc_org="IETF",
+            )
         )
 
         if match:
 
             if current:
+
                 clauses.append(
                     current
                 )
@@ -850,6 +1154,7 @@ def _split_ietf_clauses(
             )
 
     if current:
+
         clauses.append(
             current
         )
@@ -858,7 +1163,9 @@ def _split_ietf_clauses(
         (
             clause_no,
             clause_title,
-            "\n".join(body).strip(),
+            "\n".join(
+                body
+            ).strip(),
         )
         for (
             clause_no,
@@ -887,18 +1194,26 @@ def _match_heading(
     _split_ietf_clauses içerisinde yapılır.
     """
 
-    candidate = line.rstrip()
+    candidate = (
+        line.rstrip()
+    )
 
     if not candidate:
+
         return None
 
     # Girintili örnek satırlarını heading olarak
     # değerlendirme.
-    if candidate != candidate.lstrip():
+    if (
+        candidate
+        != candidate.lstrip()
+    ):
+
         return None
 
     org = (
-        doc_org or ""
+        doc_org
+        or ""
     ).strip().upper()
 
     # -------------------------------------------------
@@ -910,6 +1225,7 @@ def _match_heading(
         if RFC_TOC_LINE.match(
             candidate
         ):
+
             return None
 
         return (
@@ -932,6 +1248,7 @@ def _match_heading(
         if GPP_TOC_LINE.match(
             candidate
         ):
+
             return None
 
         match = (
@@ -941,6 +1258,7 @@ def _match_heading(
         )
 
         if not match:
+
             return None
 
         clause_number = (
@@ -957,12 +1275,17 @@ def _match_heading(
 
             try:
 
-                if int(
-                    clause_number
-                ) > 99:
+                if (
+                    int(
+                        clause_number
+                    )
+                    > 99
+                ):
+
                     return None
 
             except ValueError:
+
                 return None
 
         return match
@@ -1000,8 +1323,13 @@ def split_into_clauses(
         )
     """
 
+    if not document_text:
+
+        return []
+
     org = (
-        doc_org or ""
+        doc_org
+        or ""
     ).strip().upper()
 
     # -------------------------------------------------
@@ -1012,8 +1340,10 @@ def split_into_clauses(
 
     if org == "IETF":
 
-        return _split_ietf_clauses(
-            document_text
+        return (
+            _split_ietf_clauses(
+                document_text
+            )
         )
 
     # -------------------------------------------------
@@ -1044,7 +1374,7 @@ def split_into_clauses(
     for line in lines:
 
         # -------------------------------------------------
-        # 3GPP gerçek içerik başlangıcı
+        # 3GPP GERÇEK İÇERİK BAŞLANGICI
         # -------------------------------------------------
 
         if (
@@ -1060,7 +1390,10 @@ def split_into_clauses(
 
             if (
                 scope_match
-                and scope_match.group(1) == "1"
+                and (
+                    scope_match.group(1)
+                    == "1"
+                )
                 and (
                     scope_match
                     .group(2)
@@ -1069,13 +1402,17 @@ def split_into_clauses(
                     == "scope"
                 )
             ):
-                gpp_content_started = True
+
+                gpp_content_started = (
+                    True
+                )
 
             else:
+
                 continue
 
         # -------------------------------------------------
-        # 3GPP TOC temizliği
+        # 3GPP TOC TEMİZLİĞİ
         # -------------------------------------------------
 
         if org == "3GPP":
@@ -1083,20 +1420,24 @@ def split_into_clauses(
             if GPP_TOC_LINE.match(
                 line.strip()
             ):
+
                 continue
 
         # -------------------------------------------------
-        # Heading eşleşmesi
+        # HEADING EŞLEŞMESİ
         # -------------------------------------------------
 
-        match = _match_heading(
-            line=line,
-            doc_org=doc_org,
+        match = (
+            _match_heading(
+                line=line,
+                doc_org=doc_org,
+            )
         )
 
         if match:
 
             if current:
+
                 clauses.append(
                     current
                 )
@@ -1123,7 +1464,9 @@ def split_into_clauses(
         (
             clause_no,
             clause_title,
-            "\n".join(body).strip(),
+            "\n".join(
+                body
+            ).strip(),
         )
         for (
             clause_no,
@@ -1152,8 +1495,13 @@ def _split_long_text(
     Gerçek clause numarası değiştirilmez.
     """
 
-    title = title.strip()
-    body = body.strip()
+    title = (
+        title.strip()
+    )
+
+    body = (
+        body.strip()
+    )
 
     if not body:
 
@@ -1169,16 +1517,24 @@ def _split_long_text(
         else body
     )
 
+    # -------------------------------------------------
     # Zaten yeterince küçükse bölme.
-    if len(
-        full_text
-    ) <= max_chars:
+    # -------------------------------------------------
+
+    if (
+        len(
+            full_text
+        )
+        <= max_chars
+    ):
 
         return [
             full_text
         ]
 
-    chunks: list[str] = []
+    chunks: list[
+        str
+    ] = []
 
     # Her alt parçanın başında title olacağı için
     # body tarafında kullanılabilecek maksimum alanı
@@ -1194,7 +1550,10 @@ def _split_long_text(
         - title_size
     )
 
-    if available_body_chars <= 0:
+    if (
+        available_body_chars
+        <= 0
+    ):
 
         available_body_chars = (
             max_chars
@@ -1239,7 +1598,10 @@ def _split_long_text(
                 )
             )
 
-            if candidate_end <= start:
+            if (
+                candidate_end
+                <= start
+            ):
 
                 candidate_end = (
                     body.rfind(
@@ -1249,10 +1611,17 @@ def _split_long_text(
                     )
                 )
 
-                if candidate_end > start:
+                if (
+                    candidate_end
+                    > start
+                ):
+
                     candidate_end += 1
 
-            if candidate_end <= start:
+            if (
+                candidate_end
+                <= start
+            ):
 
                 candidate_end = (
                     body.rfind(
@@ -1262,8 +1631,14 @@ def _split_long_text(
                     )
                 )
 
-            if candidate_end > start:
-                end = candidate_end
+            if (
+                candidate_end
+                > start
+            ):
+
+                end = (
+                    candidate_end
+                )
 
         part = (
             body[
@@ -1281,22 +1656,29 @@ def _split_long_text(
 
             else:
 
-                chunk_text = part
+                chunk_text = (
+                    part
+                )
 
             chunks.append(
                 chunk_text
             )
 
-        if end >= len(body):
+        if (
+            end
+            >= len(body)
+        ):
+
             break
 
         # -------------------------------------------------
-        # Overlap
+        # OVERLAP
         # -------------------------------------------------
 
         next_start = max(
             0,
-            end - overlap_chars,
+            end
+            - overlap_chars,
         )
 
         # Bir kelimenin ortasından başlamamak için
@@ -1312,18 +1694,32 @@ def _split_long_text(
             )
 
             if (
-                next_space != -1
-                and next_space < end
+                next_space
+                != -1
+                and (
+                    next_space
+                    < end
+                )
             ):
+
                 next_start = (
-                    next_space + 1
+                    next_space
+                    + 1
                 )
 
         # Sonsuz döngü koruması.
-        if next_start <= start:
-            next_start = end
+        if (
+            next_start
+            <= start
+        ):
 
-        start = next_start
+            next_start = (
+                end
+            )
+
+        start = (
+            next_start
+        )
 
     return chunks
 
@@ -1356,9 +1752,15 @@ def build_chunks(
         Chunk
     ] = []
 
-    clauses = split_into_clauses(
-        document_text=document_text,
-        doc_org=doc_org,
+    if not document_text:
+
+        return chunks
+
+    clauses = (
+        split_into_clauses(
+            document_text=document_text,
+            doc_org=doc_org,
+        )
     )
 
     for (
@@ -1378,7 +1780,7 @@ def build_chunks(
         ).strip()
 
         # -------------------------------------------------
-        # VOID kontrolü
+        # VOID KONTROLÜ
         # -------------------------------------------------
 
         is_void = (
@@ -1415,7 +1817,7 @@ def build_chunks(
             continue
 
         # -------------------------------------------------
-        # Normal / uzun clause chunking
+        # NORMAL / UZUN CLAUSE CHUNKING
         # -------------------------------------------------
 
         text_parts = (
@@ -1425,7 +1827,9 @@ def build_chunks(
             )
         )
 
-        for text_part in text_parts:
+        for text_part in (
+            text_parts
+        ):
 
             clean_part = (
                 text_part
@@ -1433,6 +1837,7 @@ def build_chunks(
             ).strip()
 
             if not clean_part:
+
                 continue
 
             chunks.append(
