@@ -513,8 +513,6 @@ def _parse_3gpp_toc_entry(
     if not title:
         return None
 
-    # "650 Route des Lucioles ..." benzeri
-    # adres gürültüsünü engelle.
     if (
         clause_number.isdigit()
         and "." not in clause_number
@@ -547,11 +545,6 @@ def _extract_3gpp_toc(
 ]:
     """
     3GPP Contents bölümünden whitelist çıkarır.
-
-    TOC içerisindeki entry'ler çoğunlukla art arda gelir.
-    Gerçek içerikte tesadüfen TOC regex'ine benzeyen satırların
-    whitelist'e eklenmesini önlemek için ardışıklık kontrolü
-    uygulanır.
     """
 
     toc_start = (
@@ -722,7 +715,6 @@ def _match_3gpp_heading_against_toc(
         )
 
         if expected_title is None:
-
             return None
 
         if raw_title:
@@ -731,9 +723,6 @@ def _match_3gpp_heading_against_toc(
                 raw_title,
                 expected_title,
             ):
-
-                # Annex descriptor extraction farkları
-                # nedeniyle clause kimliği burada yeterli.
                 pass
 
         return (
@@ -775,14 +764,12 @@ def _match_3gpp_heading_against_toc(
     )
 
     if expected_title is None:
-
         return None
 
     if not _3gpp_titles_match(
         title,
         expected_title,
     ):
-
         return None
 
     return (
@@ -792,29 +779,21 @@ def _match_3gpp_heading_against_toc(
 
 
 # =========================================================
-# 3GPP RECOVERY
+# 3GPP RECOVERY - TITLE ONLY
 # =========================================================
 
-def _match_3gpp_recovered_heading(
+def _recover_3gpp_title_only_heading(
     line: str,
     toc_sections: dict[str, str],
     seen_sections: set[str],
     toc_positions: dict[str, int],
     last_toc_position: int,
-) -> tuple[
-    str,
-    str,
-    str,
-] | None:
+) -> tuple[str, str] | None:
     """
-    Extraction sırasında clause numarası kaybolmuş
-    heading'leri TOC whitelist kullanarak kurtarır.
+    Extraction sırasında clause numarası tamamen
+    kaybolmuş heading'i TOC üzerinden kurtarır.
 
-    İki recovery türü vardır:
-
-    -------------------------------------------------
-
-    TITLE_ONLY
+    Örnek:
 
         GPRS attach procedures
 
@@ -822,35 +801,19 @@ def _match_3gpp_recovered_heading(
 
         4.1.1 GPRS attach procedures
 
-    -------------------------------------------------
-
-    SUFFIX_NUMBER
-
-        .2 Successful GPRS attach procedures
-
-    TOC:
-
-        4.1.1.2 Successful GPRS attach procedures
-
-    -------------------------------------------------
-
-    Güvenlik kuralları:
-
-    - Clause TOC'da bulunmalıdır.
-    - Başlık birebir normalize eşleşmelidir.
-    - Clause daha önce görülmemiş olmalıdır.
-    - TOC sırası geriye gitmemelidir.
-    - Birden fazla olası eşleşme varsa recovery yapılmaz.
-
-    Returns:
+    Sonuç:
 
         (
-            clause_number,
-            clause_title,
-            recovery_type
+            "4.1.1",
+            "GPRS attach procedures"
         )
 
-    veya None.
+    Güvenlik:
+
+    - Clause daha önce görülmemiş olmalı.
+    - TOC sırasında geriye gidilmemeli.
+    - Normalize edilmiş title birebir eşleşmeli.
+    - Yalnızca TEK aday bulunmalı.
     """
 
     candidate = (
@@ -859,111 +822,6 @@ def _match_3gpp_recovered_heading(
 
     if not candidate:
         return None
-
-    # -------------------------------------------------
-    # 1. SUFFIX NUMBER RECOVERY
-    #
-    # .1 Title
-    # .2 Title
-    # .1.2 Title
-    # -------------------------------------------------
-
-    suffix_match = (
-        GPP_SUFFIX_HEADING.fullmatch(
-            candidate
-        )
-    )
-
-    if suffix_match:
-
-        suffix = (
-            suffix_match
-            .group(1)
-            .strip()
-        )
-
-        candidate_title = (
-            _clean_3gpp_title(
-                suffix_match
-                .group(2)
-            )
-        )
-
-        possible_matches: list[
-            tuple[str, str]
-        ] = []
-
-        for (
-            clause_number,
-            expected_title,
-        ) in toc_sections.items():
-
-            if (
-                clause_number
-                in seen_sections
-            ):
-                continue
-
-            toc_position = (
-                toc_positions.get(
-                    clause_number,
-                    -1,
-                )
-            )
-
-            if (
-                toc_position
-                <= last_toc_position
-            ):
-                continue
-
-            clause_upper = (
-                clause_number.upper()
-            )
-
-            if not clause_upper.endswith(
-                suffix.upper()
-            ):
-                continue
-
-            if not _3gpp_titles_match(
-                candidate_title,
-                expected_title,
-            ):
-                continue
-
-            possible_matches.append(
-                (
-                    clause_number,
-                    expected_title,
-                )
-            )
-
-        # Yalnızca tek eşleşme varsa güvenli.
-        if len(possible_matches) == 1:
-
-            (
-                clause_number,
-                clause_title,
-            ) = possible_matches[0]
-
-            return (
-                clause_number,
-                clause_title,
-                "suffix_number",
-            )
-
-        return None
-
-    # -------------------------------------------------
-    # 2. TITLE-ONLY RECOVERY
-    #
-    # Clause numarası tamamen kaybolmuş.
-    #
-    # Örnek:
-    #
-    # GPRS attach procedures
-    # -------------------------------------------------
 
     candidate_title = (
         _clean_3gpp_title(
@@ -974,8 +832,11 @@ def _match_3gpp_recovered_heading(
     if not candidate_title:
         return None
 
-    # Aşırı uzun normal cümleleri title olarak
-    # değerlendirme ihtimalini azalt.
+    # Çok kısa değerlerin heading sanılmasını azalt.
+    if len(candidate_title) < 3:
+        return None
+
+    # Uzun normal paragraf/cümlelerin title sanılmasını azalt.
     if len(candidate_title) > 300:
         return None
 
@@ -1001,6 +862,8 @@ def _match_3gpp_recovered_heading(
             )
         )
 
+        # Daha önce geçtiğimiz TOC noktasına
+        # geriye dönme.
         if (
             toc_position
             <= last_toc_position
@@ -1020,27 +883,326 @@ def _match_3gpp_recovered_heading(
             )
         )
 
-    # -------------------------------------------------
-    # EN KRİTİK GÜVENLİK KURALI
-    #
-    # "General", "Void", "Introduction" gibi aynı
-    # title TOC'da birden fazla clause'a ait olabilir.
+    # "General", "Introduction", "Void" gibi başlıklar
+    # TOC içerisinde birden fazla kez bulunabilir.
     #
     # Tahmin yürütmüyoruz.
+    if len(possible_matches) != 1:
+        return None
+
+    return (
+        possible_matches[0]
+    )
+
+
+# =========================================================
+# 3GPP RECOVERY - SUFFIX NUMBER
+# =========================================================
+
+def _recover_3gpp_suffix_heading(
+    line: str,
+    toc_sections: dict[str, str],
+    seen_sections: set[str],
+    toc_positions: dict[str, int],
+    last_toc_position: int,
+    current_clause_no: str | None,
+) -> tuple[str, str] | None:
+    """
+    Extraction sırasında clause numarasının baş tarafı
+    kaybolmuşsa TOC üzerinden clause'u kurtarır.
+
+    Örnek:
+
+        current:
+            4.1.1
+
+        extraction:
+            .1 Attempted GPRS attach procedures
+
+        TOC:
+            4.1.1.1 Attempted GPRS attach procedures
+
+    Sonuç:
+
+        (
+            "4.1.1.1",
+            "Attempted GPRS attach procedures"
+        )
+
+    Aynı şekilde mevcut child clause'dan sibling
+    recovery de yapılabilir:
+
+        current:
+            4.1.1.1
+
+        extraction:
+            .2 Successful GPRS attach procedures
+
+        ->
+            4.1.1.2
+    """
+
+    candidate = (
+        line or ""
+    ).strip()
+
+    if not candidate:
+        return None
+
+    suffix_match = (
+        GPP_SUFFIX_HEADING.fullmatch(
+            candidate
+        )
+    )
+
+    if suffix_match is None:
+        return None
+
+    suffix = (
+        suffix_match
+        .group(1)
+        .lstrip(".")
+        .strip()
+    )
+
+    candidate_title = (
+        _clean_3gpp_title(
+            suffix_match
+            .group(2)
+        )
+    )
+
+    if not suffix:
+        return None
+
+    if not candidate_title:
+        return None
+
+    possible_matches: list[
+        tuple[str, str]
+    ] = []
+
+    # -------------------------------------------------
+    # 1. CURRENT CLAUSE ÜZERİNDEN RECONSTRUCTION
+    # -------------------------------------------------
+
+    if current_clause_no:
+
+        current_parts = (
+            current_clause_no
+            .split(".")
+        )
+
+        # Önce current clause'u doğrudan parent kabul et.
+        #
+        # 4.1.1 + .1
+        # ->
+        # 4.1.1.1
+
+        direct_candidate = (
+            f"{current_clause_no}.{suffix}"
+        )
+
+        direct_title = (
+            toc_sections.get(
+                direct_candidate
+            )
+        )
+
+        if (
+            direct_title is not None
+            and direct_candidate not in seen_sections
+        ):
+
+            direct_position = (
+                toc_positions.get(
+                    direct_candidate,
+                    -1,
+                )
+            )
+
+            if (
+                direct_position
+                > last_toc_position
+                and _3gpp_titles_match(
+                    candidate_title,
+                    direct_title,
+                )
+            ):
+
+                possible_matches.append(
+                    (
+                        direct_candidate,
+                        direct_title,
+                    )
+                )
+
+        # -------------------------------------------------
+        # 2. CURRENT CHILD'DAN SIBLING BUL
+        #
+        # current:
+        #     4.1.1.1
+        #
+        # line:
+        #     .2 Successful...
+        #
+        # parent:
+        #     4.1.1
+        #
+        # candidate:
+        #     4.1.1.2
+        # -------------------------------------------------
+
+        for cut_index in range(
+            len(current_parts) - 1,
+            0,
+            -1,
+        ):
+
+            parent = ".".join(
+                current_parts[
+                    :cut_index
+                ]
+            )
+
+            reconstructed = (
+                f"{parent}.{suffix}"
+            )
+
+            if (
+                reconstructed
+                == direct_candidate
+            ):
+                continue
+
+            expected_title = (
+                toc_sections.get(
+                    reconstructed
+                )
+            )
+
+            if expected_title is None:
+                continue
+
+            if (
+                reconstructed
+                in seen_sections
+            ):
+                continue
+
+            toc_position = (
+                toc_positions.get(
+                    reconstructed,
+                    -1,
+                )
+            )
+
+            if (
+                toc_position
+                <= last_toc_position
+            ):
+                continue
+
+            if not _3gpp_titles_match(
+                candidate_title,
+                expected_title,
+            ):
+                continue
+
+            possible_matches.append(
+                (
+                    reconstructed,
+                    expected_title,
+                )
+            )
+
+    # -------------------------------------------------
+    # 3. GLOBAL TOC FALLBACK
+    #
+    # Current parent extraction'da kaybolmuş olabilir.
+    #
+    # Bu durumda suffix + title kullanarak TOC içerisinde
+    # yalnızca tek eşleşme varsa kabul edilir.
+    # -------------------------------------------------
+
+    for (
+        clause_number,
+        expected_title,
+    ) in toc_sections.items():
+
+        if (
+            clause_number
+            in seen_sections
+        ):
+            continue
+
+        toc_position = (
+            toc_positions.get(
+                clause_number,
+                -1,
+            )
+        )
+
+        if (
+            toc_position
+            <= last_toc_position
+        ):
+            continue
+
+        clause_parts = (
+            clause_number
+            .split(".")
+        )
+
+        # Son bölüm veya son birkaç bölüm suffix ile
+        # uyuşmalı.
+        suffix_parts = (
+            suffix.split(".")
+        )
+
+        if (
+            len(clause_parts)
+            < len(suffix_parts)
+        ):
+            continue
+
+        if (
+            clause_parts[
+                -len(suffix_parts):
+            ]
+            != suffix_parts
+        ):
+            continue
+
+        if not _3gpp_titles_match(
+            candidate_title,
+            expected_title,
+        ):
+            continue
+
+        match_tuple = (
+            clause_number,
+            expected_title,
+        )
+
+        if (
+            match_tuple
+            not in possible_matches
+        ):
+
+            possible_matches.append(
+                match_tuple
+            )
+
+    # -------------------------------------------------
+    # YALNIZCA TEK GÜVENLİ EŞLEŞME
     # -------------------------------------------------
 
     if len(possible_matches) != 1:
         return None
 
-    (
-        clause_number,
-        clause_title,
-    ) = possible_matches[0]
-
     return (
-        clause_number,
-        clause_title,
-        "title_only",
+        possible_matches[0]
     )
 
 
@@ -1057,15 +1219,6 @@ def _find_3gpp_content_start(
     TOC bittikten sonra gerçek clause başlangıcını bulur.
 
     Scope zorunlu değildir.
-
-    Örneğin aşağıdakilerin tümü çalışabilir:
-
-        1 Scope
-        1 Scope.
-        1. Scope
-        0a Scope
-        1 Void
-        1 Outline of the document
     """
 
     if not toc_sections:
@@ -1122,12 +1275,6 @@ def _match_3gpp_annex_without_toc(
     """
     TOC bulunmayan ama Annex içeriği bulunan
     doküman parçaları için güvenli fallback.
-
-    Örnek:
-
-        B.1 Coexistence evaluation ...
-        B.2 ...
-        B.3 ...
     """
 
     candidate = (
@@ -1167,15 +1314,6 @@ def _split_3gpp_without_toc(
     Burada rastgele numeric heading kabul edilmez.
 
     Yalnızca Annex-style yapılar işlenir.
-
-    Böylece meeting contribution gibi yanlış fetch edilmiş
-    dokümanların:
-
-        1. ...
-        2. ...
-        3. ...
-
-    satırları yanlışlıkla standart clause'u yapılmaz.
     """
 
     clauses = []
@@ -1244,15 +1382,14 @@ def _split_3gpp_clauses(
     """
     3GPP dokümanını clause bazında ayırır.
 
-    Öncelikli yöntem:
-        TOC whitelist
+    Öncelik:
 
-    Gerçek içerikte yalnızca TOC'da bulunan
-    heading'ler yeni clause başlatır.
+    1. Normal TOC whitelist heading
+    2. Suffix-number recovery
+    3. Title-only recovery
 
-    Extraction sırasında bazı heading numaralarının
-    kısmen veya tamamen kaybolması ayrı recovery
-    adımında ele alınacaktır.
+    Recovery yalnızca güvenli ve tek bir TOC
+    eşleşmesi bulunduğunda uygulanır.
     """
 
     if not document_text:
@@ -1285,6 +1422,19 @@ def _split_3gpp_clauses(
         )
 
     # -------------------------------------------------
+    # TOC POZİSYONLARI
+    # -------------------------------------------------
+
+    toc_positions = (
+        _build_3gpp_toc_positions(
+            toc_sections
+        )
+    )
+
+    # Son kabul edilen clause'un TOC sırası.
+    last_toc_position = -1
+
+    # -------------------------------------------------
     # GERÇEK İÇERİK BAŞLANGICI
     # -------------------------------------------------
 
@@ -1312,15 +1462,91 @@ def _split_3gpp_clauses(
         tuple[
             str,
             str,
-            list[str],
+            str,
         ]
     ] = []
 
-    current_clause_no: str | None = None
-    current_clause_title: str | None = None
+    current_clause_no: (
+        str | None
+    ) = None
+
+    current_clause_title: (
+        str | None
+    ) = None
+
     current_body: list[str] = []
 
     seen_sections: set[str] = set()
+
+    # -------------------------------------------------
+    # MEVCUT CLAUSE'U KAPAT
+    # -------------------------------------------------
+
+    def flush_current() -> None:
+
+        nonlocal current_clause_no
+        nonlocal current_clause_title
+        nonlocal current_body
+
+        if (
+            current_clause_no
+            is None
+        ):
+            return
+
+        clauses.append(
+            (
+                current_clause_no,
+                (
+                    current_clause_title
+                    or ""
+                ),
+                "\n".join(
+                    current_body
+                ).strip(),
+            )
+        )
+
+        current_clause_no = None
+        current_clause_title = None
+        current_body = []
+
+    # -------------------------------------------------
+    # YENİ CLAUSE BAŞLAT
+    # -------------------------------------------------
+
+    def start_clause(
+        clause_number: str,
+        clause_title: str,
+    ) -> None:
+
+        nonlocal current_clause_no
+        nonlocal current_clause_title
+        nonlocal current_body
+        nonlocal last_toc_position
+
+        flush_current()
+
+        current_clause_no = (
+            clause_number
+        )
+
+        current_clause_title = (
+            clause_title
+        )
+
+        current_body = []
+
+        seen_sections.add(
+            clause_number
+        )
+
+        last_toc_position = (
+            toc_positions.get(
+                clause_number,
+                last_toc_position,
+            )
+        )
 
     # -------------------------------------------------
     # CONTENT START'TAN İTİBAREN TARA
@@ -1334,9 +1560,9 @@ def _split_3gpp_clauses(
             lines[i]
         )
 
-        # ---------------------------------------------
-        # TOC WHITELIST HEADING KONTROLÜ
-        # ---------------------------------------------
+        # =================================================
+        # 1. NORMAL TOC WHITELIST HEADING
+        # =================================================
 
         heading = (
             _match_3gpp_heading_against_toc(
@@ -1352,53 +1578,106 @@ def _split_3gpp_clauses(
                 clause_title,
             ) = heading
 
-            # Aynı section ikinci kez görülürse
-            # yeni clause açma.
             if (
                 clause_number
                 not in seen_sections
             ):
 
-                # Önce mevcut clause'u kapat.
+                heading_position = (
+                    toc_positions.get(
+                        clause_number,
+                        -1,
+                    )
+                )
+
+                # Gerçek içerikte geriye dönük yanlış
+                # eşleşmeleri engelle.
                 if (
-                    current_clause_no
-                    is not None
+                    heading_position
+                    > last_toc_position
                 ):
 
-                    clauses.append(
-                        (
-                            current_clause_no,
-                            (
-                                current_clause_title
-                                or ""
-                            ),
-                            "\n".join(
-                                current_body
-                            ).strip(),
-                        )
+                    start_clause(
+                        clause_number,
+                        clause_title,
                     )
 
-                # Yeni clause aç.
-                current_clause_no = (
-                    clause_number
-                )
+                    i += 1
+                    continue
 
-                current_clause_title = (
-                    clause_title
-                )
+        # =================================================
+        # 2. SUFFIX NUMBER RECOVERY
+        #
+        # .1 Attempted ...
+        # .2 Successful ...
+        # =================================================
 
-                current_body = []
+        recovered_suffix = (
+            _recover_3gpp_suffix_heading(
+                line=line,
+                toc_sections=toc_sections,
+                seen_sections=seen_sections,
+                toc_positions=toc_positions,
+                last_toc_position=last_toc_position,
+                current_clause_no=current_clause_no,
+            )
+        )
 
-                seen_sections.add(
-                    clause_number
-                )
+        if (
+            recovered_suffix
+            is not None
+        ):
 
-                i += 1
-                continue
+            (
+                clause_number,
+                clause_title,
+            ) = recovered_suffix
 
-        # ---------------------------------------------
-        # MEVCUT CLAUSE BODY
-        # ---------------------------------------------
+            start_clause(
+                clause_number,
+                clause_title,
+            )
+
+            i += 1
+            continue
+
+        # =================================================
+        # 3. TITLE ONLY RECOVERY
+        #
+        # GPRS attach procedures
+        # =================================================
+
+        recovered_title = (
+            _recover_3gpp_title_only_heading(
+                line=line,
+                toc_sections=toc_sections,
+                seen_sections=seen_sections,
+                toc_positions=toc_positions,
+                last_toc_position=last_toc_position,
+            )
+        )
+
+        if (
+            recovered_title
+            is not None
+        ):
+
+            (
+                clause_number,
+                clause_title,
+            ) = recovered_title
+
+            start_clause(
+                clause_number,
+                clause_title,
+            )
+
+            i += 1
+            continue
+
+        # =================================================
+        # NORMAL BODY
+        # =================================================
 
         if (
             current_clause_no
@@ -1415,25 +1694,10 @@ def _split_3gpp_clauses(
     # SON CLAUSE
     # -------------------------------------------------
 
-    if (
-        current_clause_no
-        is not None
-    ):
-
-        clauses.append(
-            (
-                current_clause_no,
-                (
-                    current_clause_title
-                    or ""
-                ),
-                "\n".join(
-                    current_body
-                ).strip(),
-            )
-        )
+    flush_current()
 
     return clauses
+
 
 # =========================================================
 # IETF TABLE OF CONTENTS
@@ -1709,7 +1973,6 @@ def _match_ietf_heading_against_toc(
 ):
 
     if index >= len(lines):
-
         return None
 
     candidate = (
@@ -1718,7 +1981,6 @@ def _match_ietf_heading_against_toc(
     )
 
     if not candidate:
-
         return None
 
     # -------------------------------------------------
@@ -1795,7 +2057,6 @@ def _match_ietf_heading_against_toc(
         )
 
         if expected_title is None:
-
             return None
 
         title_candidate = (
@@ -1831,7 +2092,6 @@ def _find_ietf_content_start(
 ) -> int | None:
 
     if not toc_sections:
-
         return None
 
     search_start = (
@@ -1864,7 +2124,6 @@ def _find_ietf_content_start(
         )
 
         if heading is None:
-
             continue
 
         if (
@@ -1890,7 +2149,6 @@ def _match_ietf_fallback_heading(
     )
 
     if not candidate:
-
         return None
 
     if (
@@ -1924,7 +2182,6 @@ def _split_ietf_clauses(
 ]:
 
     if not document_text:
-
         return []
 
     lines = (
@@ -2200,7 +2457,6 @@ def split_into_clauses(
 ]:
 
     if not document_text:
-
         return []
 
     org = (
@@ -2449,7 +2705,6 @@ def build_chunks(
     chunks = []
 
     if not document_text:
-
         return chunks
 
     clauses = (
@@ -2533,7 +2788,6 @@ def build_chunks(
             ).strip()
 
             if not clean_part:
-
                 continue
 
             chunks.append(
