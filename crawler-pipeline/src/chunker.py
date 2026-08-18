@@ -346,7 +346,7 @@ def _clean_rfc_title(
     )
 
     value = re.sub(
-        r"\s*\.{2,}.*$",
+        r"\s*(?:\.\s*){2,}$",
         "",
         value,
     )
@@ -1948,6 +1948,50 @@ def _extract_ietf_toc(
             continue
 
         # -------------------------------------------------
+        # GERÇEK İÇERİK BAŞLADI MI?
+        # -------------------------------------------------
+        # TOC'da daha önce gördüğümüz bir section numarası,
+        # aynı başlıkla tekrar geliyorsa artık TOC değil,
+        # dokümanın gerçek içeriğindeyiz.
+        repeated_section = (
+            IETF_SECTION_NUMBER.fullmatch(
+                stripped
+            )
+        )
+
+        if (
+            sections
+            and repeated_section
+            and i + 1 < len(lines)
+        ):
+            section_number = (
+                repeated_section.group(1)
+            )
+
+            expected_title = (
+                sections.get(
+                    section_number
+                )
+            )
+
+            if expected_title is not None:
+                actual_title = (
+                    _clean_rfc_title(
+                        re.sub(
+                            r"^\s*\.\s*",
+                            "",
+                            lines[i + 1],
+                        )
+                    )
+                )
+
+                if _titles_match(
+                    actual_title,
+                    expected_title,
+                ):
+                    break
+
+        # -------------------------------------------------
         # TEK SATIR TOC
         # -------------------------------------------------
 
@@ -1998,6 +2042,78 @@ def _extract_ietf_toc(
 
                 i += 1
                 continue
+
+        # -------------------------------------------------
+        # MODERN RFC: 3 SATIRLI TOC
+        # örnek:
+        # 1
+        # .Â Â
+        # Overview
+        # -------------------------------------------------
+
+        modern_section_match = (
+            IETF_SECTION_NUMBER.fullmatch(
+                stripped
+            )
+        )
+
+        if (
+            modern_section_match
+            and i + 2 < scan_end
+        ):
+            separator_line = (
+                lines[i + 1]
+                .strip()
+            )
+
+            title_line = (
+                lines[i + 2]
+                .strip()
+            )
+
+            separator_normalized = (
+                separator_line
+                .replace("Â", "")
+                .replace("\xa0", "")
+                .strip()
+            )
+
+            if (
+                separator_normalized == "."
+                and title_line
+                and not IETF_SECTION_NUMBER.fullmatch(
+                    title_line
+                )
+            ):
+                section_number = (
+                    modern_section_match.group(1)
+                )
+
+                title = (
+                    _clean_rfc_title(
+                        title_line
+                    )
+                )
+
+                if (
+                    title
+                    and _looks_like_rfc_toc_title(
+                        title
+                    )
+                ):
+                    if (
+                        section_number
+                        not in sections
+                    ):
+                        sections[
+                            section_number
+                        ] = title
+
+                    toc_end = i + 2
+                    last_match_index = i + 2
+
+                    i += 3
+                    continue
 
         # -------------------------------------------------
         # ÇOK SATIRLI TOC
@@ -2226,9 +2342,13 @@ def _match_ietf_heading_against_toc(
 
         title_candidate = (
             _clean_rfc_title(
-                lines[
-                    index + 1
-                ]
+                re.sub(
+                    r"^\s*\.\s*",
+                    "",
+                    lines[
+                        index + 1
+                    ],
+                )
             )
         )
 
@@ -2896,6 +3016,17 @@ def build_chunks(
         ).strip()
 
         # -------------------------------------------------
+        # ETSI KAPAK / ADRES GÜRÜLTÜSÜ
+        # -------------------------------------------------
+
+        if (
+            (doc_org or "").strip().upper() == "ETSI"
+            and clause_no == "650"
+            and "route des lucioles" in title_clean.casefold()
+        ):
+            continue
+
+        # -------------------------------------------------
         # VOID
         # -------------------------------------------------
 
@@ -2969,3 +3100,4 @@ def build_chunks(
             )
 
     return chunks
+
