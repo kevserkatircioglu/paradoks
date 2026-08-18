@@ -53,11 +53,24 @@ kaybolmuşsa:
         ->
     P-TMSI reallocation procedures
 
+Clause numarası sağlam kalıp başlığın bazı kelimeleri
+kaybolmuşsa da kontrollü recovery uygulanır.
+
+Örnek:
+
+    A.6.1.3.1.4 Heterogeneous Configurations
+        ->
+    A.6.1.3.1.4 Heterogeneous TDM Port Configurations
+
 Recovery yalnızca TOC içerisinde güvenli bir
 eşleşme bulunduğunda uygulanır.
 
 Exact recovery ve fuzzy/damaged recovery yalnızca
 TOC'da sıradaki beklenen clause için uygulanır.
+
+Exact clause number + damaged title recovery de
+yalnızca TOC'da sıradaki beklenen clause için
+uygulanır.
 
 Böylece gövde içindeki:
 
@@ -814,42 +827,6 @@ def _match_3gpp_recovered_heading(
     str,
     str,
 ] | None:
-    """
-    Clause numarası extraction sırasında kısmen veya
-    tamamen kaybolmuş başlıkları TOC yardımıyla kurtarır.
-
-    ÖNEMLİ GÜVENLİK KURALI:
-
-    Recovery yalnızca TOC'daki BİR SONRAKİ beklenen
-    clause üzerinde yapılır.
-
-    Böylece örneğin:
-
-        mevcut TOC pozisyonu = 262
-
-    iken gövdede:
-
-        Addition of the ability ...
-
-    satırı görülüp doğrudan TOC 264'e atlanamaz.
-
-    Önce TOC 263'ün bulunması gerekir.
-
-    Bu kural hem:
-
-        title-only recovery
-
-    hem de:
-
-        suffix-number recovery
-
-    için geçerlidir.
-
-    Exact numbered heading'ler ise splitter içerisinde
-    ayrıca işlendiğinden, gerçekten numarası bulunan bir
-    başlık gerektiğinde ilerideki TOC pozisyonuna güvenli
-    biçimde geçebilir.
-    """
 
     candidate = (
         line or ""
@@ -916,14 +893,6 @@ def _match_3gpp_recovered_heading(
 
     # =================================================
     # 1. SUFFIX NUMBER RECOVERY
-    #
-    # Örnek:
-    #
-    # .2 Successful ...
-    #
-    # ->
-    #
-    # 4.1.1.2 Successful ...
     # =================================================
 
     suffix_match = (
@@ -970,17 +939,6 @@ def _match_3gpp_recovered_heading(
 
     # =================================================
     # 2. TITLE ONLY RECOVERY
-    #
-    # Örnek:
-    #
-    # GPRS attach procedures
-    #
-    # ->
-    #
-    # 4.1.1 GPRS attach procedures
-    #
-    # Ancak yalnızca 4.1.1 gerçekten TOC'da sıradaki
-    # beklenen clause ise.
     # =================================================
 
     candidate_title = (
@@ -1003,6 +961,7 @@ def _match_3gpp_recovered_heading(
         expected_title,
         "title_only",
     )
+
 
 # =========================================================
 # 3GPP FUZZY TITLE NORMALIZATION
@@ -1115,6 +1074,181 @@ def _3gpp_fuzzy_title_score(
         sequence_score * 0.75
         +
         word_score * 0.25
+    )
+
+
+# =========================================================
+# 3GPP EXACT NUMBER + DAMAGED TITLE RECOVERY
+# =========================================================
+
+def _match_3gpp_exact_number_damaged_title(
+    line: str,
+    toc_sections: dict[str, str],
+    seen_sections: set[str],
+    toc_positions: dict[str, int],
+    last_toc_position: int,
+) -> tuple[
+    str,
+    str,
+    str,
+] | None:
+    """
+    Clause numarası sağlam ancak başlığın bazı
+    karakterleri veya kelimeleri extraction sırasında
+    kaybolmuşsa recovery yapar.
+
+    Örnek:
+
+        A.6.1.3.1.4 Heterogeneous Configurations
+
+    TOC:
+
+        A.6.1.3.1.4 Heterogeneous TDM Port Configurations
+
+    Güvenlik:
+
+    - clause numarası satırda açıkça bulunmalıdır
+    - clause TOC'da bulunmalıdır
+    - daha önce parse edilmemiş olmalıdır
+    - TOC'da TAM OLARAK sıradaki beklenen clause olmalıdır
+    - title fuzzy skoru minimum eşiği geçmelidir
+
+    Bu nedenle parser uzak bir TOC pozisyonuna
+    sıçrayamaz.
+    """
+
+    candidate = (
+        line or ""
+    ).strip()
+
+    if not candidate:
+        return None
+
+    if len(candidate) > 300:
+        return None
+
+    # -------------------------------------------------
+    # NUMARALI HEADING OLMALI
+    # -------------------------------------------------
+
+    heading_match = (
+        GPP_SECTION_HEADING.fullmatch(
+            candidate
+        )
+    )
+
+    if not heading_match:
+        return None
+
+    clause_number = (
+        heading_match
+        .group(1)
+        .rstrip(".")
+        .upper()
+    )
+
+    candidate_title = (
+        _clean_3gpp_title(
+            heading_match
+            .group(2)
+        )
+    )
+
+    if not candidate_title:
+        return None
+
+    # -------------------------------------------------
+    # TOC'DA OLMALI
+    # -------------------------------------------------
+
+    expected_title = (
+        toc_sections.get(
+            clause_number
+        )
+    )
+
+    if expected_title is None:
+        return None
+
+    # -------------------------------------------------
+    # DAHA ÖNCE GÖRÜLMEMİŞ OLMALI
+    # -------------------------------------------------
+
+    if (
+        clause_number
+        in seen_sections
+    ):
+        return None
+
+    position = (
+        toc_positions.get(
+            clause_number,
+            -1,
+        )
+    )
+
+    # -------------------------------------------------
+    # YALNIZCA SIRADAKİ BEKLENEN CLAUSE
+    # -------------------------------------------------
+
+    if (
+        position
+        != last_toc_position + 1
+    ):
+        return None
+
+    # -------------------------------------------------
+    # EXACT TITLE İSE ZATEN NORMAL MATCHER YAKALAR
+    # -------------------------------------------------
+
+    if _3gpp_titles_match(
+        candidate_title,
+        expected_title,
+    ):
+        return None
+
+    # -------------------------------------------------
+    # BODY BENZERİ SATIRLARA KARŞI TEMEL KORUMA
+    # -------------------------------------------------
+
+    if re.match(
+        r"^(NOTE|Figure|Table)\b",
+        candidate_title,
+        re.IGNORECASE,
+    ):
+        return None
+
+    if candidate_title.startswith(
+        (
+            "•",
+            "[",
+        )
+    ):
+        return None
+
+    # -------------------------------------------------
+    # FUZZY SCORE
+    # -------------------------------------------------
+
+    score = (
+        _3gpp_fuzzy_title_score(
+            candidate_title,
+            expected_title,
+        )
+    )
+
+    # Clause numarası birebir doğru,
+    # TOC clause'u birebir doğru
+    # ve pozisyon tam sıradaki clause olduğu için
+    # generic damaged recovery'den daha düşük
+    # threshold güvenli şekilde kullanılabilir.
+    if score < 0.60:
+        return None
+
+    return (
+        clause_number,
+        expected_title,
+        "exact_number_damaged_title",
     )
 
 
@@ -1612,7 +1746,37 @@ def _split_3gpp_clauses(
                     continue
 
         # =================================================
-        # 2. EXACT RECOVERY
+        # 2. EXACT NUMBER + DAMAGED TITLE
+        # =================================================
+
+        exact_number_damaged = (
+            _match_3gpp_exact_number_damaged_title(
+                line=line,
+                toc_sections=toc_sections,
+                seen_sections=seen_sections,
+                toc_positions=toc_positions,
+                last_toc_position=last_toc_position,
+            )
+        )
+
+        if exact_number_damaged is not None:
+
+            (
+                clause_number,
+                clause_title,
+                _recovery_type,
+            ) = exact_number_damaged
+
+            open_clause(
+                clause_number,
+                clause_title,
+            )
+
+            i += 1
+            continue
+
+        # =================================================
+        # 3. EXACT RECOVERY
         # =================================================
 
         recovered = (
@@ -1654,7 +1818,7 @@ def _split_3gpp_clauses(
                 continue
 
         # =================================================
-        # 3. DAMAGED / FUZZY RECOVERY
+        # 4. DAMAGED / FUZZY RECOVERY
         # =================================================
 
         damaged = (
