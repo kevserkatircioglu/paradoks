@@ -56,10 +56,18 @@ kaybolmuşsa:
 Recovery yalnızca TOC içerisinde güvenli bir
 eşleşme bulunduğunda uygulanır.
 
-Fuzzy/damaged recovery yalnızca TOC'da sıradaki
-beklenen clause için uygulanır. Böylece gövde içindeki
-normal metinlerin parser'ı ilerideki clause'lara yanlışlıkla
-atlatması engellenir.
+Exact recovery ve fuzzy/damaged recovery yalnızca
+TOC'da sıradaki beklenen clause için uygulanır.
+
+Böylece gövde içindeki:
+
+    Introduction
+    General
+    Evaluation
+    Option 1:
+
+gibi normal metinlerin parser'ı ilerideki clause'lara
+yanlışlıkla atlatması engellenir.
 """
 
 import re
@@ -641,22 +649,6 @@ def _get_next_3gpp_toc_clause(
     str,
     int,
 ] | None:
-    """
-    last_toc_position sonrasında TOC'da gelen ilk
-    görülmemiş clause'u döndürür.
-
-    Fuzzy recovery yalnızca bu clause üzerinde çalışır.
-
-    Böylece örneğin abbreviation kısmındaki:
-
-        MM Mobility Management
-
-    satırı yanlışlıkla ilerideki:
-
-        4.1 Mobility Management
-
-    clause'una atlayamaz.
-    """
 
     target_position = (
         last_toc_position + 1
@@ -830,38 +822,64 @@ def _match_3gpp_recovered_heading(
     if not candidate:
         return None
 
-    # =====================================================
-    # RECOVERY GÜVENLİK SINIRI
-    # =====================================================
-    #
-    # Recovery yalnızca mevcut parser pozisyonuna yakın
-    # TOC girdileri üzerinde yapılır.
-    #
-    # Aksi halde body içerisindeki:
-    #
-    #     Option 1:
-    #     Introduction
-    #     General
-    #     Evaluation
-    #
-    # gibi satırlar yüzlerce clause ilerideki bir TOC
-    # başlığı ile eşleşip parser'ı ileri sıçratabilir.
-    #
-    # Örnek gerçek hata:
-    #
-    #     last_toc_position = 209
-    #     "Option 1:"
-    #         ->
-    #     TOC position 1034
-    #
-    # Böyle bir sıçrama sonrasındaki yüzlerce gerçek
-    # clause "geride kaldığı" için parse edilemiyordu.
-    # =====================================================
+    # -------------------------------------------------
+    # BODY SATIRLARINI ELE
+    # -------------------------------------------------
 
-    max_lookahead = 20
+    if re.match(
+        r"^[a-zA-Z]\)",
+        candidate,
+    ):
+        return None
+
+    if re.match(
+        r"^(NOTE|Figure|Table)\b",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return None
+
+    if candidate.startswith(
+        (
+            "•",
+            "[",
+        )
+    ):
+        return None
+
+    if re.match(
+        r"^-\s+",
+        candidate,
+    ):
+        return None
+
+    if len(candidate) > 300:
+        return None
 
     # -------------------------------------------------
-    # SUFFIX
+    # YALNIZCA SIRADAKİ BEKLENEN CLAUSE
+    # -------------------------------------------------
+
+    next_clause = (
+        _get_next_3gpp_toc_clause(
+            toc_sections=toc_sections,
+            toc_positions=toc_positions,
+            seen_sections=seen_sections,
+            last_toc_position=last_toc_position,
+        )
+    )
+
+    if next_clause is None:
+        return None
+
+    (
+        clause_number,
+        expected_title,
+        _toc_position,
+    ) = next_clause
+
+    # -------------------------------------------------
+    # SUFFIX RECOVERY
     # -------------------------------------------------
 
     suffix_match = (
@@ -885,101 +903,29 @@ def _match_3gpp_recovered_heading(
             )
         )
 
-        possible_matches = []
+        if not (
+            clause_number
+            .upper()
+            .endswith(
+                suffix.upper()
+            )
+        ):
+            return None
 
-        for (
+        if not _3gpp_titles_match(
+            candidate_title,
+            expected_title,
+        ):
+            return None
+
+        return (
             clause_number,
             expected_title,
-        ) in toc_sections.items():
-
-            if clause_number in seen_sections:
-                continue
-
-            toc_position = (
-                toc_positions.get(
-                    clause_number,
-                    -1,
-                )
-            )
-
-            # -----------------------------------------
-            # GERİDEKİ / AYNI POZİSYON
-            # -----------------------------------------
-
-            if (
-                toc_position
-                <= last_toc_position
-            ):
-                continue
-
-            # -----------------------------------------
-            # ÇOK UZAK İLERİ SIÇRAMAYI ENGELLE
-            # -----------------------------------------
-
-            distance = (
-                toc_position
-                - last_toc_position
-            )
-
-            if (
-                last_toc_position >= 0
-                and distance > max_lookahead
-            ):
-                continue
-
-            # -----------------------------------------
-            # CLAUSE SUFFIX
-            # -----------------------------------------
-
-            if not (
-                clause_number
-                .upper()
-                .endswith(
-                    suffix.upper()
-                )
-            ):
-                continue
-
-            # -----------------------------------------
-            # TITLE
-            # -----------------------------------------
-
-            if not _3gpp_titles_match(
-                candidate_title,
-                expected_title,
-            ):
-                continue
-
-            possible_matches.append(
-                (
-                    toc_position,
-                    clause_number,
-                    expected_title,
-                )
-            )
-
-        if len(possible_matches) == 1:
-
-            possible_matches.sort(
-                key=lambda item: item[0]
-            )
-
-            (
-                _position,
-                clause_number,
-                clause_title,
-            ) = possible_matches[0]
-
-            return (
-                clause_number,
-                clause_title,
-                "suffix_number",
-            )
-
-        return None
+            "suffix_number",
+        )
 
     # -------------------------------------------------
-    # TITLE ONLY
+    # TITLE ONLY RECOVERY
     # -------------------------------------------------
 
     candidate_title = (
@@ -991,117 +937,18 @@ def _match_3gpp_recovered_heading(
     if not candidate_title:
         return None
 
-    if len(candidate_title) > 300:
-        return None
-
-    # -------------------------------------------------
-    # AÇIK BODY SATIRLARINI ELE
-    # -------------------------------------------------
-
-    if re.match(
-        r"^[a-zA-Z]\)",
-        candidate,
-    ):
-        return None
-
-    if re.match(
-        r"^(NOTE|Figure|Table)\b",
-        candidate,
-        re.IGNORECASE,
-    ):
-        return None
-
-    if candidate.startswith(
-        (
-            "-",
-            "•",
-            "[",
-        )
-    ):
-        return None
-
-    possible_matches = []
-
-    for (
-        clause_number,
+    if not _3gpp_titles_match(
+        candidate_title,
         expected_title,
-    ) in toc_sections.items():
-
-        if clause_number in seen_sections:
-            continue
-
-        toc_position = (
-            toc_positions.get(
-                clause_number,
-                -1,
-            )
-        )
-
-        # ---------------------------------------------
-        # GERİDEKİ / AYNI POZİSYON
-        # ---------------------------------------------
-
-        if (
-            toc_position
-            <= last_toc_position
-        ):
-            continue
-
-        # ---------------------------------------------
-        # ÇOK UZAK İLERİ SIÇRAMAYI ENGELLE
-        # ---------------------------------------------
-
-        distance = (
-            toc_position
-            - last_toc_position
-        )
-
-        if (
-            last_toc_position >= 0
-            and distance > max_lookahead
-        ):
-            continue
-
-        # ---------------------------------------------
-        # TITLE
-        # ---------------------------------------------
-
-        if not _3gpp_titles_match(
-            candidate_title,
-            expected_title,
-        ):
-            continue
-
-        possible_matches.append(
-            (
-                toc_position,
-                clause_number,
-                expected_title,
-            )
-        )
-
-    # -------------------------------------------------
-    # TEK VE GÜVENLİ EŞLEŞME
-    # -------------------------------------------------
-
-    if len(possible_matches) != 1:
+    ):
         return None
-
-    possible_matches.sort(
-        key=lambda item: item[0]
-    )
-
-    (
-        _position,
-        clause_number,
-        clause_title,
-    ) = possible_matches[0]
 
     return (
         clause_number,
-        clause_title,
+        expected_title,
         "title_only",
     )
+
 
 # =========================================================
 # 3GPP FUZZY TITLE NORMALIZATION
@@ -1115,8 +962,6 @@ def _normalize_3gpp_fuzzy_title(
         text or ""
     ).strip()
 
-    # .1 Title gibi suffix numarasını karşılaştırmadan
-    # önce kaldır.
     value = re.sub(
         r"^\.\d+(?:\.\d+)*\s+",
         "",
@@ -1234,30 +1079,6 @@ def _match_3gpp_damaged_heading(
     str,
     str,
 ] | None:
-    """
-    Extraction nedeniyle başı bozulmuş başlıkları kurtarır.
-
-    Örnek:
-
-        ttached subscribers
-            ->
-        Attached subscribers
-
-        DP context activation procedures
-            ->
-        PDP context activation procedures
-
-        -TMSI reallocation procedures
-            ->
-        P-TMSI reallocation procedures
-
-    ÖNEMLİ:
-    Fuzzy recovery yalnızca TOC'daki bir sonraki
-    beklenen clause için uygulanır.
-
-    Böylece sıradaki clause atlanıp daha ilerideki bir
-    clause yanlışlıkla açılmaz.
-    """
 
     candidate = (
         line or ""
@@ -1283,16 +1104,8 @@ def _match_3gpp_damaged_heading(
     ):
         return None
 
-    # Bullet:
-    #
-    # - something
-    # -\tsomething
-    #
-    # Ancak:
-    #
-    # -TMSI reallocation procedures
-    #
-    # extraction hasarı olabilir. Onu ENGELLEMİYORUZ.
+    # "-TMSI..." extraction hasarı olabileceği için
+    # yalnızca "- " şeklindeki bullet engellenir.
     if re.match(
         r"^-\s+",
         candidate,
@@ -1311,7 +1124,7 @@ def _match_3gpp_damaged_heading(
         return None
 
     # -------------------------------------------------
-    # SUFFIX VAR MI?
+    # SUFFIX
     # -------------------------------------------------
 
     suffix = None
@@ -1383,9 +1196,6 @@ def _match_3gpp_damaged_heading(
         )
     )
 
-    # Extraction'da ilk birkaç karakter kaybolabiliyor.
-    # 0.84 bu tip bozulmalarda yeterli ancak normal
-    # body cümlelerine karşı hâlâ muhafazakâr.
     if score < 0.84:
         return None
 
@@ -1514,11 +1324,11 @@ def _split_3gpp_without_toc(
                     current
                 )
 
-            current = (
+            current = [
                 heading[0],
                 heading[1],
                 [],
-            )
+            ]
 
         elif current:
 
@@ -1587,19 +1397,11 @@ def _split_3gpp_clauses(
             )
         )
 
-    # -------------------------------------------------
-    # TOC POZİSYONLARI
-    # -------------------------------------------------
-
     toc_positions = (
         _build_3gpp_toc_positions(
             toc_sections
         )
     )
-
-    # -------------------------------------------------
-    # CONTENT START
-    # -------------------------------------------------
 
     content_start = (
         _find_3gpp_content_start(
@@ -1742,11 +1544,6 @@ def _split_3gpp_clauses(
                     )
                 )
 
-                # Exact heading güvenilir.
-                #
-                # TOC sırasındaki ileriki bir clause ise
-                # aradaki extraction-kayıp clause'ları
-                # atlamasına izin veriyoruz.
                 if (
                     position
                     > last_toc_position
@@ -2409,11 +2206,11 @@ def _split_ietf_clauses(
                             current
                         )
 
-                    current = (
+                    current = [
                         section_number,
                         section_title,
                         [],
-                    )
+                    ]
 
                     seen_sections.add(
                         section_number
@@ -2471,13 +2268,13 @@ def _split_ietf_clauses(
                     current
                 )
 
-            current = (
+            current = [
                 match.group(1),
                 _clean_rfc_title(
                     match.group(2)
                 ),
                 [],
-            )
+            ]
 
         elif current:
 
@@ -2561,11 +2358,11 @@ def _split_generic_clauses(
                     current
                 )
 
-            current = (
+            current = [
                 match.group(1),
                 match.group(2).strip(),
                 [],
-            )
+            ]
 
         elif current:
 
