@@ -814,6 +814,42 @@ def _match_3gpp_recovered_heading(
     str,
     str,
 ] | None:
+    """
+    Clause numarası extraction sırasında kısmen veya
+    tamamen kaybolmuş başlıkları TOC yardımıyla kurtarır.
+
+    ÖNEMLİ GÜVENLİK KURALI:
+
+    Recovery yalnızca TOC'daki BİR SONRAKİ beklenen
+    clause üzerinde yapılır.
+
+    Böylece örneğin:
+
+        mevcut TOC pozisyonu = 262
+
+    iken gövdede:
+
+        Addition of the ability ...
+
+    satırı görülüp doğrudan TOC 264'e atlanamaz.
+
+    Önce TOC 263'ün bulunması gerekir.
+
+    Bu kural hem:
+
+        title-only recovery
+
+    hem de:
+
+        suffix-number recovery
+
+    için geçerlidir.
+
+    Exact numbered heading'ler ise splitter içerisinde
+    ayrıca işlendiğinden, gerçekten numarası bulunan bir
+    başlık gerektiğinde ilerideki TOC pozisyonuna güvenli
+    biçimde geçebilir.
+    """
 
     candidate = (
         line or ""
@@ -839,6 +875,12 @@ def _match_3gpp_recovered_heading(
     ):
         return None
 
+    if re.match(
+        r"^-\s+",
+        candidate,
+    ):
+        return None
+
     if candidate.startswith(
         (
             "•",
@@ -847,17 +889,11 @@ def _match_3gpp_recovered_heading(
     ):
         return None
 
-    if re.match(
-        r"^-\s+",
-        candidate,
-    ):
-        return None
-
     if len(candidate) > 300:
         return None
 
     # -------------------------------------------------
-    # YALNIZCA SIRADAKİ BEKLENEN CLAUSE
+    # YALNIZCA SIRADAKİ BEKLENEN TOC CLAUSE
     # -------------------------------------------------
 
     next_clause = (
@@ -873,14 +909,22 @@ def _match_3gpp_recovered_heading(
         return None
 
     (
-        clause_number,
+        expected_clause_number,
         expected_title,
-        _toc_position,
+        _expected_position,
     ) = next_clause
 
-    # -------------------------------------------------
-    # SUFFIX RECOVERY
-    # -------------------------------------------------
+    # =================================================
+    # 1. SUFFIX NUMBER RECOVERY
+    #
+    # Örnek:
+    #
+    # .2 Successful ...
+    #
+    # ->
+    #
+    # 4.1.1.2 Successful ...
+    # =================================================
 
     suffix_match = (
         GPP_SUFFIX_HEADING.fullmatch(
@@ -904,7 +948,7 @@ def _match_3gpp_recovered_heading(
         )
 
         if not (
-            clause_number
+            expected_clause_number
             .upper()
             .endswith(
                 suffix.upper()
@@ -919,14 +963,25 @@ def _match_3gpp_recovered_heading(
             return None
 
         return (
-            clause_number,
+            expected_clause_number,
             expected_title,
             "suffix_number",
         )
 
-    # -------------------------------------------------
-    # TITLE ONLY RECOVERY
-    # -------------------------------------------------
+    # =================================================
+    # 2. TITLE ONLY RECOVERY
+    #
+    # Örnek:
+    #
+    # GPRS attach procedures
+    #
+    # ->
+    #
+    # 4.1.1 GPRS attach procedures
+    #
+    # Ancak yalnızca 4.1.1 gerçekten TOC'da sıradaki
+    # beklenen clause ise.
+    # =================================================
 
     candidate_title = (
         _clean_3gpp_title(
@@ -944,11 +999,10 @@ def _match_3gpp_recovered_heading(
         return None
 
     return (
-        clause_number,
+        expected_clause_number,
         expected_title,
         "title_only",
     )
-
 
 # =========================================================
 # 3GPP FUZZY TITLE NORMALIZATION
