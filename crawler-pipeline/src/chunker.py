@@ -830,6 +830,36 @@ def _match_3gpp_recovered_heading(
     if not candidate:
         return None
 
+    # =====================================================
+    # RECOVERY GÜVENLİK SINIRI
+    # =====================================================
+    #
+    # Recovery yalnızca mevcut parser pozisyonuna yakın
+    # TOC girdileri üzerinde yapılır.
+    #
+    # Aksi halde body içerisindeki:
+    #
+    #     Option 1:
+    #     Introduction
+    #     General
+    #     Evaluation
+    #
+    # gibi satırlar yüzlerce clause ilerideki bir TOC
+    # başlığı ile eşleşip parser'ı ileri sıçratabilir.
+    #
+    # Örnek gerçek hata:
+    #
+    #     last_toc_position = 209
+    #     "Option 1:"
+    #         ->
+    #     TOC position 1034
+    #
+    # Böyle bir sıçrama sonrasındaki yüzlerce gerçek
+    # clause "geride kaldığı" için parse edilemiyordu.
+    # =====================================================
+
+    max_lookahead = 20
+
     # -------------------------------------------------
     # SUFFIX
     # -------------------------------------------------
@@ -862,10 +892,7 @@ def _match_3gpp_recovered_heading(
             expected_title,
         ) in toc_sections.items():
 
-            if (
-                clause_number
-                in seen_sections
-            ):
+            if clause_number in seen_sections:
                 continue
 
             toc_position = (
@@ -875,11 +902,34 @@ def _match_3gpp_recovered_heading(
                 )
             )
 
+            # -----------------------------------------
+            # GERİDEKİ / AYNI POZİSYON
+            # -----------------------------------------
+
             if (
                 toc_position
                 <= last_toc_position
             ):
                 continue
+
+            # -----------------------------------------
+            # ÇOK UZAK İLERİ SIÇRAMAYI ENGELLE
+            # -----------------------------------------
+
+            distance = (
+                toc_position
+                - last_toc_position
+            )
+
+            if (
+                last_toc_position >= 0
+                and distance > max_lookahead
+            ):
+                continue
+
+            # -----------------------------------------
+            # CLAUSE SUFFIX
+            # -----------------------------------------
 
             if not (
                 clause_number
@@ -890,6 +940,10 @@ def _match_3gpp_recovered_heading(
             ):
                 continue
 
+            # -----------------------------------------
+            # TITLE
+            # -----------------------------------------
+
             if not _3gpp_titles_match(
                 candidate_title,
                 expected_title,
@@ -898,18 +952,22 @@ def _match_3gpp_recovered_heading(
 
             possible_matches.append(
                 (
+                    toc_position,
                     clause_number,
                     expected_title,
-                    toc_position,
                 )
             )
 
         if len(possible_matches) == 1:
 
+            possible_matches.sort(
+                key=lambda item: item[0]
+            )
+
             (
+                _position,
                 clause_number,
                 clause_title,
-                _position,
             ) = possible_matches[0]
 
             return (
@@ -936,10 +994,29 @@ def _match_3gpp_recovered_heading(
     if len(candidate_title) > 300:
         return None
 
-    # Normal body field'larını heading olarak alma.
+    # -------------------------------------------------
+    # AÇIK BODY SATIRLARINI ELE
+    # -------------------------------------------------
+
     if re.match(
         r"^[a-zA-Z]\)",
-        candidate_title,
+        candidate,
+    ):
+        return None
+
+    if re.match(
+        r"^(NOTE|Figure|Table)\b",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return None
+
+    if candidate.startswith(
+        (
+            "-",
+            "•",
+            "[",
+        )
     ):
         return None
 
@@ -950,10 +1027,7 @@ def _match_3gpp_recovered_heading(
         expected_title,
     ) in toc_sections.items():
 
-        if (
-            clause_number
-            in seen_sections
-        ):
+        if clause_number in seen_sections:
             continue
 
         toc_position = (
@@ -963,11 +1037,34 @@ def _match_3gpp_recovered_heading(
             )
         )
 
+        # ---------------------------------------------
+        # GERİDEKİ / AYNI POZİSYON
+        # ---------------------------------------------
+
         if (
             toc_position
             <= last_toc_position
         ):
             continue
+
+        # ---------------------------------------------
+        # ÇOK UZAK İLERİ SIÇRAMAYI ENGELLE
+        # ---------------------------------------------
+
+        distance = (
+            toc_position
+            - last_toc_position
+        )
+
+        if (
+            last_toc_position >= 0
+            and distance > max_lookahead
+        ):
+            continue
+
+        # ---------------------------------------------
+        # TITLE
+        # ---------------------------------------------
 
         if not _3gpp_titles_match(
             candidate_title,
@@ -977,19 +1074,27 @@ def _match_3gpp_recovered_heading(
 
         possible_matches.append(
             (
+                toc_position,
                 clause_number,
                 expected_title,
-                toc_position,
             )
         )
+
+    # -------------------------------------------------
+    # TEK VE GÜVENLİ EŞLEŞME
+    # -------------------------------------------------
 
     if len(possible_matches) != 1:
         return None
 
+    possible_matches.sort(
+        key=lambda item: item[0]
+    )
+
     (
+        _position,
         clause_number,
         clause_title,
-        _position,
     ) = possible_matches[0]
 
     return (
@@ -997,7 +1102,6 @@ def _match_3gpp_recovered_heading(
         clause_title,
         "title_only",
     )
-
 
 # =========================================================
 # 3GPP FUZZY TITLE NORMALIZATION
