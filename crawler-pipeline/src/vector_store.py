@@ -80,7 +80,8 @@ class VectorStore:
         )
 
         return self.model.encode(
-            formatted_text
+            formatted_text,
+            normalize_embeddings=True,
         ).tolist()
 
     def _build_chunk_id(
@@ -332,6 +333,7 @@ class VectorStore:
             formatted_texts,
             batch_size=EMBEDDING_BATCH_SIZE,
             show_progress_bar=True,
+            normalize_embeddings=True,
         ).tolist()
 
         # -------------------------------------------------
